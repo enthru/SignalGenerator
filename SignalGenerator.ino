@@ -67,22 +67,15 @@ void set_lpf(unsigned volatile long frequency) {
   updateBCD();
 }
 
-//DDS pins
-const byte dds_RESET = 10;
-const byte dds_DATA  = 9;
-const byte dds_LOAD  = 8;
-const byte dds_CLOCK = 7;
-
-const unsigned long max_frequency_step = 10000000; //Max Frequency step
+const unsigned long max_frequency_step = 100000000; //Max Frequency step
 const unsigned int min_frequency_step = 1;
-const unsigned long max_frequency = 30000000; //Max Frequency
+const unsigned long max_frequency = 500000000; //Max Frequency
 const int min_frequency=25; // Minimum Frequency
 
 unsigned long last_frequency = 14000000;
 unsigned long frequency_step = 100000;
 
 // Rotary encoder
-
 const int EncoderPinCLK = 2; 
 const int EncoderPinDT = 12;  
 const int EncoderPinSW = 13;  
@@ -107,25 +100,39 @@ unsigned volatile long sweepStartFrequency =  1000000;
 unsigned volatile long sweepStopFrequency =  2000000;
 unsigned volatile long sweepCurrentFrequency =  1000001;
 
+unsigned volatile long sweepLastStartFrequency = 1000000;
+unsigned volatile long sweepLastStopFrequency = 2000000;
+
 unsigned int sweepStep = 1;
+int sweepTime = 10;
+int sweepLastTime = 10;
 
 unsigned int sweepPoints = 10000;
 bool sweepModeStart = true;
 bool sweepModeStop = false;
 bool sweepModeStep = false;
 // sweepMenu is to determine which parameter we are changing in sweep mode
+// 0 - Output enabled
 // 1 - Start freq.
 // 2 - Stop freq.
-// 3 - Sweep points
-// 4 - ATT
-// 5 - LNA
+// 3 - Sweep time
+// 4 - Amplitude
+// 5 - ATT
+// 6 - LNA
 short sweepMenu = 1;
 
 // genMenu - same as sweepmenu
+// 0 - Output enabled
 // 1 - Freq.
-// 2 - ATT
-// 3 - LNA
+// 2 - Amplitude
+// 3 - ATT
+// 4 - LNA
 short genMenu = 1;
+
+// Amplitude
+int amplitude = 0;
+int minAmplitude = -72;
+int maxAmplitude = 17;
 
 // ATT value
 float attLevel = 0;
@@ -134,6 +141,9 @@ float attStep = 0.5;
 // LNA
 bool lnaEnabled = false;
 
+// Killswitch :)
+bool outputEnabled = false;
+
 void isr ()  {
   static unsigned long lastInterruptTime = 0;
   unsigned long interruptTime = millis();
@@ -141,6 +151,16 @@ void isr ()  {
   if (interruptTime - lastInterruptTime > 5) {
     if (!sweepMode) {
       switch (genMenu) {
+      case 0:
+        if (digitalRead(EncoderPinDT) == LOW)
+        {
+          outputEnabled = !outputEnabled;
+        }
+        else {
+          outputEnabled = !outputEnabled;
+        }
+        changeOutput();
+        break;
       case 1:
         if (digitalRead(EncoderPinDT) == LOW)
         {
@@ -152,9 +172,26 @@ void isr ()  {
         frequency = min(max_frequency, max(min_frequency, frequency));
         break;
         case 2:
-          changeLNA();
+          if (digitalRead(EncoderPinDT) == LOW) {
+            if (amplitude > minAmplitude) {
+              amplitude = amplitude - 1;
+            }  else {
+              amplitude = minAmplitude;
+            }
+          }
+          else {
+            if (amplitude < maxAmplitude) {
+              amplitude = amplitude + 1;
+            } else {
+              amplitude = maxAmplitude;
+            }
+          }
+          changeAmplitude();
           break;
         case 3:
+          changeLNA();
+          break;
+        case 4:
           if (digitalRead(EncoderPinDT) == LOW) {
             setATT(false);
           } else { setATT(true); }
@@ -163,6 +200,16 @@ void isr ()  {
       lastInterruptTime = interruptTime;
     } else { 
       switch (sweepMenu) {
+        case 0:
+          if (digitalRead(EncoderPinDT) == LOW)
+          {
+            outputEnabled = !outputEnabled;
+          }
+          else {
+            outputEnabled = !outputEnabled;
+          }
+          changeOutput();
+          break;
         case 1:
           if (digitalRead(EncoderPinDT) == LOW) {
             sweepStartFrequency = sweepStartFrequency - frequency_step;
@@ -171,12 +218,9 @@ void isr ()  {
           }
           sweepStartFrequency = min(max_frequency, max(min_frequency, sweepStartFrequency));
           if (sweepStartFrequency > sweepStopFrequency) { sweepStopFrequency = sweepStartFrequency; changeStop(); }
-          sweepStep = (sweepStopFrequency - sweepStartFrequency)/sweepPoints;
-          if (sweepStep == 0) sweepStep = 1;
           sweepCurrentFrequency = sweepStartFrequency;
           Serial.println("Sweep start freq.:");
           Serial.println(format_frequency(sweepStartFrequency));
-          Serial.println(sweepStep);
           changeStart();
           break;
         case 2:
@@ -187,8 +231,6 @@ void isr ()  {
           }
           sweepStopFrequency = min(max_frequency, max(min_frequency, sweepStopFrequency));
           if (sweepStopFrequency < sweepStartFrequency) { sweepStartFrequency = sweepStopFrequency; changeStart(); }
-          sweepStep = (sweepStopFrequency - sweepStartFrequency)/sweepPoints;
-          if (sweepStep == 0) sweepStep = 1;
           sweepCurrentFrequency = sweepStartFrequency;
           Serial.println("Sweep stop freq.:");
           Serial.println(format_frequency(sweepStopFrequency));
@@ -197,22 +239,33 @@ void isr ()  {
           break;
         case 3:
           if (digitalRead(EncoderPinDT) == LOW) {
-            if (sweepPoints > 1000) sweepPoints = sweepPoints - 1000;
+            if (sweepTime >= 2) sweepTime = sweepTime - 1;
           } else {
-            if (sweepPoints <= 49100) sweepPoints = sweepPoints + 1000;
+            if (sweepTime <= 99) sweepTime = sweepTime + 1;
           }
-          sweepStep = (sweepStopFrequency - sweepStartFrequency)/sweepPoints;
-          if (sweepStep == 0) sweepStep = 1;
-          sweepCurrentFrequency = sweepStartFrequency;
-          Serial.println("Sweep points:");
-          Serial.println(sweepPoints);
-          Serial.println(sweepStep);
-          changePoints();
+          changeTime();
           break;
         case 4:
-          changeLNA();
+          if (digitalRead(EncoderPinDT) == LOW) {
+            if (amplitude > minAmplitude) {
+              amplitude = amplitude - 1;
+            }  else {
+              amplitude = minAmplitude;
+            }
+          }
+          else {
+            if (amplitude < maxAmplitude) {
+              amplitude = amplitude + 1;
+            } else {
+              amplitude = maxAmplitude;
+            }
+          }
+          changeAmplitude();
           break;
         case 5:
+          changeLNA();
+          break;
+        case 6:
           if (digitalRead(EncoderPinDT) == LOW) {
             setATT(false);
           } else { setATT(true); }
@@ -224,39 +277,84 @@ void isr ()  {
   }
 }
 
+void changeATT() {}
+
+void changeAmplitude() {
+  mylcd.Fill_Rect(140, 175, 100, 25, BACKGROUND_COLOR);
+  mylcd.Print_String(String(amplitude) + " db", FRAME_SPACING + 140, 175);
+  if (amplitude > 0) {
+    lnaEnabled = 0;
+    changeLNA();
+    Serial3.println("P"+String(amplitude-ampGain()));
+  } else {
+    lnaEnabled = 1;
+    changeLNA();
+    Serial3.println("P"+String(amplitude));
+  }
+}
+
+int ampGain(){
+  return 18;
+}
+
+
 void show_frequency() {
+  Serial3.println("F"+String(frequency));
   mylcd.Fill_Screen(BACKGROUND_COLOR);
   mylcd.Print_String("Generating", 170, FRAME_SPACING);
+  mylcd.Print_String("Status:", FRAME_SPACING, 50);
+  if (outputEnabled) { mylcd.Print_String("Enabled", FRAME_SPACING + 140, 50); } else { mylcd.Print_String("Disabled", FRAME_SPACING + 140, 50); }
   mylcd.Print_String("Frequency:", FRAME_SPACING, 75);
-  mylcd.Print_String(format_frequency(frequency), 140, 75);
-  mylcd.Print_String("LNA: ", FRAME_SPACING, 150);
-  if (lnaEnabled) { mylcd.Print_String("Enabled", 140, 150); } else {
-    mylcd.Print_String("Disabled", 140, 150);
-  }
-  mylcd.Print_String("ATT: ", FRAME_SPACING, 175);
-  mylcd.Print_String(String(attLevel) + " db", 140, 175);
-  mylcd.Print_String("Change step:   <<<<", FRAME_SPACING, 250);
-  mylcd.Print_String(format_frequency(frequency_step), 250 + FRAME_SPACING, 250);
-  mylcd.Print_String(">>>>", 420, 250);
+  mylcd.Print_String(format_frequency(frequency), FRAME_SPACING + 140, 75);
+  mylcd.Print_String("Amplitude: ", FRAME_SPACING, 175);
+  mylcd.Print_String(String(amplitude) + " db", FRAME_SPACING + 140, 175);
+  mylcd.Print_String("LNA: ", FRAME_SPACING, 200);
+  if (lnaEnabled) { mylcd.Print_String("Enabled", FRAME_SPACING + 140, 200); } else { mylcd.Print_String("Disabled", FRAME_SPACING + 140, 200); }
+  mylcd.Print_String("ATT: ", FRAME_SPACING, 225);
+  mylcd.Print_String(String(attLevel) + " db", FRAME_SPACING + 140, 225);
+  mylcd.Print_String("Change step:   <<<<", FRAME_SPACING, 275);
+  mylcd.Print_String(format_frequency(frequency_step), 240 + FRAME_SPACING, 275);
+  mylcd.Print_String(">>>>", FRAME_SPACING + 420, 275);
   mylcd.Print_String("BCD State: ", FRAME_SPACING, 100);
   mylcd.Print_String(String(digitalRead(BCD1)) + " " + String(digitalRead(BCD2)) + " " + String(digitalRead(BCD3)) + " " + String(digitalRead(BCD4)), 140, 100);
-  switch(genMenu) {
-    case 1:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 75);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 2:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 150);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 3:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 175);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
+
+  mylcd.Set_Text_colour(ARROW_COLOR);
+  mylcd.Print_String(ARROW, 350, 50);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  genMenu = 0;
+
+}
+
+void show_sweep() {
+  Serial3.println("S"+String(sweepStartFrequency)+":"+String(sweepStopFrequency)+":"+String(sweepTime));
+  mylcd.Fill_Screen(BACKGROUND_COLOR);
+  mylcd.Print_String("Sweeping", 170, FRAME_SPACING);
+  mylcd.Print_String("Status:", FRAME_SPACING, 50);
+  if (outputEnabled) { mylcd.Print_String("Enabled", FRAME_SPACING + 140, 50); } else { mylcd.Print_String("Disabled", FRAME_SPACING + 140, 50); }
+  mylcd.Print_String("Start: ", FRAME_SPACING, 75);
+  mylcd.Print_String(format_frequency(sweepStartFrequency), FRAME_SPACING + 140, 75);
+  mylcd.Print_String("Stop: ", FRAME_SPACING, 100);
+  mylcd.Print_String(format_frequency(sweepStopFrequency), FRAME_SPACING + 140, 100);
+  mylcd.Print_String("Time: ", FRAME_SPACING, 125);
+  mylcd.Print_String(String(sweepTime), FRAME_SPACING + 140, 125);
+
+  mylcd.Print_String("Amplitude: ", FRAME_SPACING, 175);
+  mylcd.Print_String(String(amplitude) + " db", FRAME_SPACING + 140, 175);
+  mylcd.Print_String("LNA: ", FRAME_SPACING, 200);
+  if (lnaEnabled) { mylcd.Print_String("Enabled", FRAME_SPACING + 140, 200); } else {
+    mylcd.Print_String("Disabled", FRAME_SPACING + 140, 200);
   }
+  mylcd.Print_String("ATT: ", FRAME_SPACING, 225);
+  mylcd.Print_String(String(attLevel) + " db", FRAME_SPACING + 140, 225);
+  mylcd.Print_String("Change step:   <<<<", FRAME_SPACING, 275);
+  mylcd.Print_String(format_frequency(frequency_step), FRAME_SPACING + 250, 275);
+  mylcd.Print_String(">>>>", FRAME_SPACING + 420, 275);
+
+  mylcd.Set_Text_colour(ARROW_COLOR);
+  mylcd.Print_String(ARROW, 350, 50);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+
+  sweepMenu = 0;
 }
 
 void changeStart() {
@@ -274,87 +372,115 @@ void changePoints() {
   mylcd.Print_String(String(sweepPoints), 140, 125);
 }
 
+void changeTime() {
+  mylcd.Fill_Rect(140, 125, 200, 25, BACKGROUND_COLOR);
+  mylcd.Print_String(String(sweepTime), 140, 125);
+}
+
 void changeGenFrequency() {
   mylcd.Fill_Rect(140, 75, 200, 25, BACKGROUND_COLOR);
   mylcd.Print_String(format_frequency(frequency), 140, 75);
 }
 
+void clearArrow() {
+  mylcd.Set_Text_colour(ARROW_COLOR);
+  mylcd.Fill_Rect(350, 25, 50, 225, BACKGROUND_COLOR);
+}
+
 void sweepChangeMenu() {
   switch(sweepMenu) {
+    case 0:
+      clearArrow();
+      mylcd.Print_String(ARROW, 350, 50);
+      mylcd.Set_Text_colour(TEXT_COLOR);
+      break;
     case 1:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
+      clearArrow();
       mylcd.Print_String(ARROW, 350, 75);
       mylcd.Set_Text_colour(TEXT_COLOR);
       break;
     case 2:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
+      clearArrow();
       mylcd.Print_String(ARROW, 350, 100);
       mylcd.Set_Text_colour(TEXT_COLOR);
       break;
     case 3:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
+      clearArrow();
       mylcd.Print_String(ARROW, 350, 125);
       mylcd.Set_Text_colour(TEXT_COLOR);
       break;
     case 4:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 150);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 5:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
+      clearArrow();
       mylcd.Print_String(ARROW, 350, 175);
       mylcd.Set_Text_colour(TEXT_COLOR);
       break;
+    case 5:
+      clearArrow();
+      mylcd.Print_String(ARROW, 350, 200);
+      mylcd.Set_Text_colour(TEXT_COLOR);
+      break;
+    case 6:
+      clearArrow();
+      mylcd.Print_String(ARROW, 350, 225);
+      mylcd.Set_Text_colour(TEXT_COLOR);
+      break; 
   }
 }
 
 void genChangeMenu() {
   switch(genMenu) {
+    case 0:
+      clearArrow();
+      mylcd.Print_String(ARROW, 350, 50);
+      mylcd.Set_Text_colour(TEXT_COLOR);
+      break;
     case 1:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
+      clearArrow();
       mylcd.Print_String(ARROW, 350, 75);
       mylcd.Set_Text_colour(TEXT_COLOR);
       break;
     case 2:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 150);
+      clearArrow();
+      mylcd.Print_String(ARROW, 350, 175);
       mylcd.Set_Text_colour(TEXT_COLOR);
       break;
     case 3:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 175);
+      clearArrow();
+      mylcd.Print_String(ARROW, 350, 200);
+      mylcd.Set_Text_colour(TEXT_COLOR);
+      break;
+    case 4:
+      clearArrow();
+      mylcd.Print_String(ARROW, 350, 225);
       mylcd.Set_Text_colour(TEXT_COLOR);
       break;
   }
 }
 
 void changeStep() {
-  mylcd.Fill_Rect(250, 250, 170, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(format_frequency(frequency_step), 250, 250);
+  mylcd.Fill_Rect(240, 275, 182, 25, BACKGROUND_COLOR);
+  mylcd.Print_String(format_frequency(frequency_step), FRAME_SPACING + 240, 275);
 }
 
 void changeLNA() {
   lnaEnabled = !lnaEnabled;
-  mylcd.Fill_Rect(140, 150, 120, 25, BACKGROUND_COLOR);
-  mylcd.Print_String("LNA: ", FRAME_SPACING, 150);
-  if (lnaEnabled) { mylcd.Print_String("Enabled", 140, 150); } else {
-    mylcd.Print_String("Disabled", 140, 150);
+  mylcd.Fill_Rect(140, 200, 120, 25, BACKGROUND_COLOR);
+  mylcd.Print_String("LNA: ", FRAME_SPACING, 200);
+  if (lnaEnabled) { mylcd.Print_String("Enabled", FRAME_SPACING + 140, 200); } else {
+    mylcd.Print_String("Disabled", FRAME_SPACING + 140, 200);
   }
   digitalWrite(LNA_PIN, lnaEnabled);
-
 }
 
-void changeATT() {
-
+void changeOutput() {
+  mylcd.Fill_Rect(140, 50, 150, 25, BACKGROUND_COLOR);
+  if (outputEnabled) { 
+    Serial3.println("E");
+    mylcd.Print_String("Enabled", FRAME_SPACING + 140, 50); 
+  } else { 
+    Serial3.println("D");
+    mylcd.Print_String("Disabled", FRAME_SPACING + 140, 50); 
+  }
 }
 
 void updateBCD() {
@@ -362,48 +488,15 @@ void updateBCD() {
   mylcd.Print_String(String(digitalRead(BCD1)) + " " + String(digitalRead(BCD2)) + " " + String(digitalRead(BCD3)) + " " + String(digitalRead(BCD4)), 140, 100);
 }
 
-void show_sweep() {
-  mylcd.Fill_Screen(BACKGROUND_COLOR);
-  mylcd.Print_String("Sweeping", 170, FRAME_SPACING);
-  mylcd.Print_String("Start: ", FRAME_SPACING, 75);
-  mylcd.Print_String(format_frequency(sweepStartFrequency), 140, 75);
-  mylcd.Print_String("Stop: ", FRAME_SPACING, 100);
-  mylcd.Print_String(format_frequency(sweepStopFrequency), 140, 100);
-  mylcd.Print_String("Points: ", FRAME_SPACING, 125);
-  mylcd.Print_String(String(sweepPoints), 140, 125);
-  mylcd.Print_String("LNA: ", FRAME_SPACING, 150);
-  if (lnaEnabled) { mylcd.Print_String("Enabled", 140, 150); } else {
-    mylcd.Print_String("Disabled", 140, 150);
-  }
-  mylcd.Print_String("ATT: ", FRAME_SPACING, 175);
-  mylcd.Print_String(String(attLevel) + " db", 140, 175);
-  mylcd.Print_String("Change step:   <<<<", FRAME_SPACING, 250);
-  mylcd.Print_String(format_frequency(frequency_step), 250, 250);
-  mylcd.Print_String(">>>>", 420, 250);
-  switch(sweepMenu) {
-    case 1:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 75);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 2:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 150);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 3:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 175);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-  }
-}
-
 void touchProcess() {
   if (my_touch.TP_Get_State()&TP_PRES_DOWN) 
   {
     delay(200);
     if (sweepMode) {
+        if ((my_touch.y<=50) && (my_touch.y>=25)) { 
+          sweepMenu=0; 
+          sweepChangeMenu();
+        }
         if ((my_touch.y<=75) && (my_touch.y>=50)) { 
           sweepMenu=1; 
           sweepChangeMenu();
@@ -416,30 +509,42 @@ void touchProcess() {
           sweepMenu=3; 
           sweepChangeMenu();
         }
-        if ((my_touch.y<=150) && (my_touch.y>=125)) { 
+        if ((my_touch.y<=175) && (my_touch.y>=150)) { 
           sweepMenu=4; 
           sweepChangeMenu();
         }
-        if ((my_touch.y<=175) && (my_touch.y>=150)) { 
+        if ((my_touch.y<=200) && (my_touch.y>=175)) { 
           sweepMenu=5; 
           sweepChangeMenu();
         }
+        if ((my_touch.y<=225) && (my_touch.y>=200)) { 
+          sweepMenu=6; 
+          sweepChangeMenu();
+        }
     } else {
+        if ((my_touch.y<=50) && (my_touch.y>=25)) { 
+          genMenu=0; 
+          genChangeMenu();
+        }
         if ((my_touch.y<=75) && (my_touch.y>=50)) { 
           genMenu=1; 
           genChangeMenu();
         }
-        if ((my_touch.y<=150) && (my_touch.y>=125)) { 
+        if ((my_touch.y<=175) && (my_touch.y>=150)) { 
           genMenu=2; 
           genChangeMenu();
         }
-        if ((my_touch.y<=175) && (my_touch.y>=150)) { 
+        if ((my_touch.y<=200) && (my_touch.y>=175)) { 
           genMenu=3; 
+          genChangeMenu();
+        }
+        if ((my_touch.y<=225) && (my_touch.y>=200)) { 
+          genMenu=4; 
           genChangeMenu();
         }
     }
     
-    if ((my_touch.y<=300) && (my_touch.y>=250)) {
+    if ((my_touch.y<=300) && (my_touch.y>=275)) {
       if  ((my_touch.x<=250) && (my_touch.x>=100)) {
         if (frequency_step == min_frequency_step) {
           frequency_step = max_frequency_step;
@@ -488,8 +593,8 @@ void setATT(bool isIncrementing) {
     attLevel = 0;
   }
   attenuator.setLevel(attLevel);
-  mylcd.Fill_Rect(140, 175, 100, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(String(attLevel) + " db", 140, 175);
+  mylcd.Fill_Rect(140, 225, 100, 25, BACKGROUND_COLOR);
+  mylcd.Print_String(String(attLevel) + " db", 140, 225);
 }
 
 char* format_frequency(unsigned volatile long frequency) {
@@ -513,6 +618,7 @@ char* format_frequency(unsigned volatile long frequency) {
 
 void setup() {
   Serial.begin(9600);
+  Serial3.begin(115200);
 
   mylcd.Init_LCD();
   mylcd.Fill_Screen(BACKGROUND_COLOR);
@@ -524,7 +630,7 @@ void setup() {
   mylcd.Print_String("SIGEN", 140, 80);
   mylcd.Set_Text_Size(5);
   mylcd.Set_Text_colour(RED);
-  mylcd.Print_String("AD9851", 160, 150);
+  mylcd.Print_String("AD9910", 160, 150);
   delay(5000);
   mylcd.Set_Text_colour(TEXT_COLOR);
   mylcd.Fill_Screen(BACKGROUND_COLOR);
@@ -549,15 +655,14 @@ void setup() {
   pinMode(EncoderPinDT, INPUT);
   pinMode(EncoderPinSW, INPUT_PULLUP);
 
+  Serial3.println("F"+String(frequency));
   attenuator.begin();
 
   // Attach the routine to service the interrupts
   attachInterrupt(digitalPinToInterrupt(EncoderPinCLK), isr, LOW);
-  setup_dds();
-
+ 
   show_frequency();
   set_bpf(frequency);
-  dds(frequency);
   Serial.println("Start");
 }
 
@@ -579,14 +684,14 @@ void loop() {
         longPressDetected = true;
         Serial.println("Long press = true");
         if (sweepMode) {
-          if (sweepMenu !=5) sweepMenu++; else sweepMenu = 1;
+          if (sweepMenu !=6) sweepMenu++; else sweepMenu = 0;
             Serial.println("Sweep menu item:");
             Serial.println(sweepMenu);
             waitingForSecondClick = false;
             sweepChangeMenu();
             delay(200);
         } else {
-          if (genMenu !=3) genMenu++; else genMenu = 1;
+          if (genMenu !=4) genMenu++; else genMenu = 0;
           Serial.println("Gen menu item:");
           Serial.println(genMenu);
           waitingForSecondClick = false;
@@ -634,14 +739,16 @@ void loop() {
       Serial.println(format_frequency(frequency));
       changeGenFrequency();
       set_bpf(frequency);
-      dds(frequency);
+      Serial3.println("F"+String(frequency));
       last_frequency = frequency;
     }
   } else {
-    // process sweep
-    if (sweepCurrentFrequency >= sweepStopFrequency) sweepCurrentFrequency = sweepStartFrequency;
-    sweepCurrentFrequency = sweepCurrentFrequency + sweepStep;
-    dds(sweepCurrentFrequency);
+    if ((sweepStartFrequency != sweepLastStartFrequency) || (sweepStopFrequency != sweepLastStopFrequency) || (sweepTime != sweepLastTime)) {
+      Serial3.println("S"+String(sweepStartFrequency)+":"+String(sweepStopFrequency)+":"+String(sweepTime));
+      sweepLastStartFrequency = sweepStartFrequency;
+      sweepLastStopFrequency = sweepStopFrequency;
+      sweepLastTime = sweepTime;
+    }
   }
   // scan touch
   my_touch.TP_Scan(0);
