@@ -92,7 +92,7 @@ bool waitingForSecondClick = false;
 
 // Long click stuff
 const int longPressDuration = 500;
-const int delayAfterLongClick = 1000;
+const int delayAfterLongClick = 500;
 bool longPressDetected = false;
 unsigned long longClickTime = 0;
 
@@ -492,7 +492,7 @@ void updateBCD() {
 void touchProcess() {
   if (my_touch.TP_Get_State()&TP_PRES_DOWN) 
   {
-    delay(200);
+    //delay(200);
     if (sweepMode) {
         if ((my_touch.y<=50) && (my_touch.y>=25)) { 
           sweepMenu=0; 
@@ -569,16 +569,15 @@ void touchProcess() {
           }
       }
     }
-    if ((my_touch.y<=50) && (my_touch.y>=0)) {
-      if (sweepMode) {
-        sweepMode = false;
-        delay(200);
-        show_frequency();
-      } 
-      else {
-        sweepMode = true;
-        delay(200);
+    if ((my_touch.y<=25) && (my_touch.y>=0)) {
+      if (!sweepMode) { 
+        Serial.println("Sweep mode");
         show_sweep();
+        sweepMode = true; 
+      } else {
+        sweepMode = false;
+        Serial.println("Generator mode");
+        show_frequency();
       }
   }
 }
@@ -680,7 +679,7 @@ void loop() {
     
     // long press handle
     while (!digitalRead(EncoderPinSW)) {
-      if (millis() - currentTime >= longPressDuration) {
+      if ((millis() - currentTime >= longPressDuration) && !longPressDetected) {
         longClickTime = millis();
         longPressDetected = true;
         Serial.println("Long press = true");
@@ -690,14 +689,14 @@ void loop() {
             Serial.println(sweepMenu);
             waitingForSecondClick = false;
             sweepChangeMenu();
-            delay(500);
+            //delay(500);
         } else {
           if (genMenu !=4) genMenu++; else genMenu = 0;
           Serial.println("Gen menu item:");
           Serial.println(genMenu);
           waitingForSecondClick = false;
           genChangeMenu();
-          delay(500);
+          //delay(500);
         }
       }
     }
