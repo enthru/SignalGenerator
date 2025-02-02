@@ -32,14 +32,15 @@ const byte BCD3 = 4;
 const byte BCD4 = 3;
 
 // LNA pin
-#define LNA_PIN 11
+const byte LNA_PIN = 11;
 
 // attenuator
-#define ATTENUATOR_PIN_LE 16
-#define ATTENUATOR_PIN_CLK 15
-#define ATTENUATOR_PIN_DATA 14
+const byte ATTENUATOR_PIN_LE = 16;
+const byte ATTENUATOR_PIN_CLK = 15;
+const byte ATTENUATOR_PIN_DATA = 14;
 PE43xx attenuator(ATTENUATOR_PIN_LE, ATTENUATOR_PIN_CLK, ATTENUATOR_PIN_DATA, PE4302);
 
+//BPF from 60dbm.com
 void set_bpf(unsigned volatile long frequency) {
   if ((frequency >= 1800000) && (frequency <= 2000000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("BPF 160m"); }
   if ((frequency >= 3500000) && (frequency <= 3800000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("BPF 80m"); }
@@ -53,6 +54,7 @@ void set_bpf(unsigned volatile long frequency) {
   updateBCD();
 }
 
+//LPF from 60dbm.com
 void set_lpf(unsigned volatile long frequency) {
   if (frequency <= 2000000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 160m"); }
   if (frequency <= 3800000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 80m"); }
@@ -107,7 +109,7 @@ unsigned int sweepStep = 1;
 int sweepTime = 10;
 int sweepLastTime = 10;
 
-unsigned int sweepPoints = 10000;
+//unsigned int sweepPoints = 10000;
 bool sweepModeStart = true;
 bool sweepModeStop = false;
 bool sweepModeStep = false;
@@ -193,8 +195,8 @@ void isr ()  {
           break;
         case 4:
           if (digitalRead(EncoderPinDT) == LOW) {
-            setATT(false);
-          } else { setATT(true); }
+            changeATT(false);
+          } else { changeATT(true); }
           break;
       }
       lastInterruptTime = interruptTime;
@@ -267,17 +269,14 @@ void isr ()  {
           break;
         case 6:
           if (digitalRead(EncoderPinDT) == LOW) {
-            setATT(false);
-          } else { setATT(true); }
-          changeATT();
+            changeATT(false);
+          } else { changeATT(true); }
           break;
       }
       lastInterruptTime = interruptTime; 
     }
   }
 }
-
-void changeATT() {}
 
 void changeAmplitude() {
   mylcd.Fill_Rect(140, 175, 100, 25, BACKGROUND_COLOR);
@@ -294,9 +293,10 @@ void changeAmplitude() {
 }
 
 int ampGain(){
+  //this function is to return amp gain based on frequency (with multiple LNAs)
+  //now only for one
   return 18;
 }
-
 
 void show_frequency() {
   Serial3.println("F"+String(frequency));
@@ -367,10 +367,11 @@ void changeStop() {
   mylcd.Print_String(format_frequency(sweepStopFrequency), 140, 100);
 }
 
+/*
 void changePoints() {
   mylcd.Fill_Rect(140, 125, 200, 25, BACKGROUND_COLOR);
   mylcd.Print_String(String(sweepPoints), 140, 125);
-}
+}*/
 
 void changeTime() {
   mylcd.Fill_Rect(140, 125, 200, 25, BACKGROUND_COLOR);
@@ -582,7 +583,7 @@ void touchProcess() {
   }
 }
 
-void setATT(bool isIncrementing) {
+void changeATT(bool isIncrementing) {
   if (isIncrementing) { attLevel = attLevel + attStep; } else { attLevel = attLevel - attStep; } 
   if (attLevel > attenuator.getMax())
   {
@@ -689,14 +690,14 @@ void loop() {
             Serial.println(sweepMenu);
             waitingForSecondClick = false;
             sweepChangeMenu();
-            delay(200);
+            delay(500);
         } else {
           if (genMenu !=4) genMenu++; else genMenu = 0;
           Serial.println("Gen menu item:");
           Serial.println(genMenu);
           waitingForSecondClick = false;
           genChangeMenu();
-          delay(200);
+          delay(500);
         }
       }
     }
@@ -743,6 +744,7 @@ void loop() {
       last_frequency = frequency;
     }
   } else {
+    // process sweep
     if ((sweepStartFrequency != sweepLastStartFrequency) || (sweepStopFrequency != sweepLastStopFrequency) || (sweepTime != sweepLastTime)) {
       Serial3.println("S"+String(sweepStartFrequency)+":"+String(sweepStopFrequency)+":"+String(sweepTime));
       sweepLastStartFrequency = sweepStartFrequency;
