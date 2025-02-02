@@ -1,12 +1,13 @@
 # SignalGenerator
 <br>
-###Main branch:
+
+### Main branch:
 <br>
 Frontend for Gra&Afch AD9910 module.<br>
 It has touch screen (ILI9488)/Encoder controls.<br>
 BCD code output for external filters.<br>
 LNA + ATT (PE4302) controls.<br><br>
 
-###AD9851 branch:
+### AD9851 branch:
 <br>
 Pretty the same config but for AD9851 signal generator. Not developing anymore.
