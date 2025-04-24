@@ -3,7 +3,6 @@
 #include <LCDWIKI_GUI.h>
 #include <LCDWIKI_KBV.h>
 #include <LCDWIKI_TOUCH.h> 
-#include <PE43xx.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -25,49 +24,17 @@ LCDWIKI_TOUCH my_touch(53,52,50,51,44);
 #define ARROW "<==="
 #define ARROW_COLOR 0xA145
 
-// Filter pins
-const byte BCD1 = 6;
-const byte BCD2 = 5;
-const byte BCD3 = 4;
-const byte BCD4 = 3;
-
 // LNA pin
 const byte LNA_PIN = 11;
-
-// attenuator
-const byte ATTENUATOR_PIN_LE = 16;
-const byte ATTENUATOR_PIN_CLK = 15;
-const byte ATTENUATOR_PIN_DATA = 14;
-PE43xx attenuator(ATTENUATOR_PIN_LE, ATTENUATOR_PIN_CLK, ATTENUATOR_PIN_DATA, PE4302);
-
-//BPF from 60dbm.com
-void set_bpf(unsigned volatile long frequency) {
-  if ((frequency >= 1800000) && (frequency <= 2000000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("BPF 160m"); }
-  if ((frequency >= 3500000) && (frequency <= 3800000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("BPF 80m"); }
-  if ((frequency >= 7000000) && (frequency <= 7100000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("BPF 40m"); }
-  if ((frequency >= 10100000) && (frequency <= 10150000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("BPF 30m"); }
-  if ((frequency >= 14000000) && (frequency <= 14350000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("BPF 20m"); }
-  if ((frequency >= 18068000) && (frequency <= 18168000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("BPF 17m"); }
-  if ((frequency >= 21000000) && (frequency <= 21450000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("BPF 15m"); }
-  if ((frequency >= 24890000) && (frequency <= 24990000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, HIGH); Serial.println("BPF 12m"); }
-  if ((frequency >= 28000000) && (frequency <= 29700000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, HIGH); Serial.println("BPF 10m"); }
-  updateBCD();
-}
-
-//LPF from 60dbm.com
-void set_lpf(unsigned volatile long frequency) {
-  if (frequency <= 2000000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 160m"); }
-  if (frequency <= 3800000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 80m"); }
-  if (frequency <= 7100000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 40m"); }
-  if (frequency <= 10150000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 30m"); }
-  if (frequency <= 14350000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("LPF 20m"); }
-  if (frequency <= 18168000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("LPF 17m"); }
-  if (frequency <= 21450000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("LPF 15m"); }
-  if (frequency <= 24990000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("LPF 12m"); }
-  if (frequency <= 29700000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, HIGH); Serial.println("LPF 10m"); }
-  if (frequency <= 50000000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, HIGH); Serial.println("LPF 6m"); }
-  updateBCD();
-}
+//10db
+#define ATT1 8
+#define ATT2 7
+//40db
+#define ATT3 6
+#define ATT4 5
+//20db
+#define ATT5 4
+#define ATT6 3
 
 const unsigned long max_frequency_step = 100000000; //Max Frequency step
 const unsigned int min_frequency_step = 1;
@@ -92,7 +59,7 @@ bool waitingForSecondClick = false;
 
 // Long click stuff
 const int longPressDuration = 500;
-const int delayAfterLongClick = 1000;
+const int delayAfterLongClick = 500;
 bool longPressDetected = false;
 unsigned long longClickTime = 0;
 
@@ -132,13 +99,12 @@ short sweepMenu = 1;
 short genMenu = 1;
 
 // Amplitude
+int realAmplitude = 0;
 int amplitude = 0;
-int minAmplitude = -72;
+int minAmplitude = -142;
 int maxAmplitude = 17;
-
-// ATT value
-float attLevel = 0;
-float attStep = 0.5;
+unsigned int attValue = 0;
+unsigned int lastAttValue = 0;
 
 // LNA
 bool lnaEnabled = false;
@@ -188,15 +154,16 @@ void isr ()  {
               amplitude = maxAmplitude;
             }
           }
+          changeATT();
           changeAmplitude();
           break;
         case 3:
-          changeLNA();
+//          changeLNA();
           break;
         case 4:
           if (digitalRead(EncoderPinDT) == LOW) {
-            changeATT(false);
-          } else { changeATT(true); }
+            showATT();
+          } else { showATT(); }
           break;
       }
       lastInterruptTime = interruptTime;
@@ -262,15 +229,16 @@ void isr ()  {
               amplitude = maxAmplitude;
             }
           }
+          changeATT();
           changeAmplitude();
           break;
         case 5:
-          changeLNA();
+//          changeLNA();
           break;
         case 6:
           if (digitalRead(EncoderPinDT) == LOW) {
-            changeATT(false);
-          } else { changeATT(true); }
+            showATT();
+          } else { showATT(); }
           break;
       }
       lastInterruptTime = interruptTime; 
@@ -284,11 +252,10 @@ void changeAmplitude() {
   if (amplitude > 0) {
     lnaEnabled = 0;
     changeLNA();
-    Serial3.println("P"+String(amplitude-ampGain()));
+    Serial3.println("P"+String(realAmplitude-ampGain()));
   } else {
     lnaEnabled = 1;
-    changeLNA();
-    Serial3.println("P"+String(amplitude));
+    Serial3.println("P"+String(realAmplitude));
   }
 }
 
@@ -311,18 +278,20 @@ void show_frequency() {
   mylcd.Print_String("LNA: ", FRAME_SPACING, 200);
   if (lnaEnabled) { mylcd.Print_String("Enabled", FRAME_SPACING + 140, 200); } else { mylcd.Print_String("Disabled", FRAME_SPACING + 140, 200); }
   mylcd.Print_String("ATT: ", FRAME_SPACING, 225);
-  mylcd.Print_String(String(attLevel) + " db", FRAME_SPACING + 140, 225);
+  mylcd.Print_String(String(attValue) + " db", FRAME_SPACING + 140, 225);
   mylcd.Print_String("Change step:   <<<<", FRAME_SPACING, 275);
   mylcd.Print_String(format_frequency(frequency_step), 240 + FRAME_SPACING, 275);
   mylcd.Print_String(">>>>", FRAME_SPACING + 420, 275);
-  mylcd.Print_String("BCD State: ", FRAME_SPACING, 100);
-  mylcd.Print_String(String(digitalRead(BCD1)) + " " + String(digitalRead(BCD2)) + " " + String(digitalRead(BCD3)) + " " + String(digitalRead(BCD4)), 140, 100);
-
   mylcd.Set_Text_colour(ARROW_COLOR);
   mylcd.Print_String(ARROW, 350, 50);
   mylcd.Set_Text_colour(TEXT_COLOR);
   genMenu = 0;
 
+}
+
+void showATT() {
+  mylcd.Fill_Rect(140, 225, 100, 25, BACKGROUND_COLOR);
+  mylcd.Print_String(String(attValue) + " db", 140, 225);
 }
 
 void show_sweep() {
@@ -345,7 +314,7 @@ void show_sweep() {
     mylcd.Print_String("Disabled", FRAME_SPACING + 140, 200);
   }
   mylcd.Print_String("ATT: ", FRAME_SPACING, 225);
-  mylcd.Print_String(String(attLevel) + " db", FRAME_SPACING + 140, 225);
+  mylcd.Print_String(String(attValue) + " db", FRAME_SPACING + 140, 225);
   mylcd.Print_String("Change step:   <<<<", FRAME_SPACING, 275);
   mylcd.Print_String(format_frequency(frequency_step), FRAME_SPACING + 250, 275);
   mylcd.Print_String(">>>>", FRAME_SPACING + 420, 275);
@@ -366,12 +335,6 @@ void changeStop() {
   mylcd.Fill_Rect(140, 100, 200, 25, BACKGROUND_COLOR);
   mylcd.Print_String(format_frequency(sweepStopFrequency), 140, 100);
 }
-
-/*
-void changePoints() {
-  mylcd.Fill_Rect(140, 125, 200, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(String(sweepPoints), 140, 125);
-}*/
 
 void changeTime() {
   mylcd.Fill_Rect(140, 125, 200, 25, BACKGROUND_COLOR);
@@ -484,11 +447,6 @@ void changeOutput() {
   }
 }
 
-void updateBCD() {
-  mylcd.Fill_Rect(140, 100, 120, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(String(digitalRead(BCD1)) + " " + String(digitalRead(BCD2)) + " " + String(digitalRead(BCD3)) + " " + String(digitalRead(BCD4)), 140, 100);
-}
-
 void touchProcess() {
   if (my_touch.TP_Get_State()&TP_PRES_DOWN) 
   {
@@ -569,33 +527,75 @@ void touchProcess() {
           }
       }
     }
-    if ((my_touch.y<=50) && (my_touch.y>=0)) {
-      if (sweepMode) {
-        sweepMode = false;
-        delay(200);
-        show_frequency();
-      } 
-      else {
-        sweepMode = true;
-        delay(200);
+    if ((my_touch.y<=25) && (my_touch.y>=0)) {
+      if (!sweepMode) { 
+        Serial.println("Sweep mode");
         show_sweep();
+        sweepMode = true; 
+      } else {
+        sweepMode = false;
+        Serial.println("Generator mode");
+        show_frequency();
       }
   }
 }
 
-void changeATT(bool isIncrementing) {
-  if (isIncrementing) { attLevel = attLevel + attStep; } else { attLevel = attLevel - attStep; } 
-  if (attLevel > attenuator.getMax())
-  {
-    attLevel = attenuator.getMax();
+void changeATT() {
+  if (amplitude > -10) {
+    realAmplitude = amplitude;
+    attValue = 0;
+  } else if ((amplitude <= -10) && (amplitude > -20)) {
+    attValue = 10;
+    realAmplitude = amplitude + 10;
+  } else if ((amplitude <= -20) && (amplitude > -30)) {
+    attValue = 20;
+    realAmplitude = amplitude + 20;
+  } else if ((amplitude <= -30) && (amplitude > -40)) {
+    attValue = 30;
+    realAmplitude = amplitude + 30;
+  } else if ((amplitude <= -40) && (amplitude > -50)) {
+    attValue = 40;
+    realAmplitude = amplitude + 40;
+  } else if ((amplitude <= -50) && (amplitude > -60)) {
+    attValue = 50;
+    realAmplitude = amplitude + 50;
+  } else if ((amplitude <= -60) && (amplitude > -70)) {
+    attValue = 60;
+    realAmplitude = amplitude + 60;
+  } else if (amplitude <= -70) {
+    attValue = 70;
+    realAmplitude = amplitude + 70;
   }
-  if (attLevel < 0)
-  {
-    attLevel = 0;
+  Serial.println(realAmplitude);
+}
+
+void changeATTValue() {
+  switch(attValue) {
+    case 0:
+      resetATT();
+      break;
+    case 10:
+      att10db();
+      break;
+    case 20:
+      att20db();
+      break;
+    case 30:
+      att30db();
+      break;
+    case 40:
+      att40db();
+      break;
+    case 50:
+      att50db();
+      break;
+    case 60:
+      att60db();
+      break;
+    case 70:
+      att70db();
   }
-  attenuator.setLevel(attLevel);
-  mylcd.Fill_Rect(140, 225, 100, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(String(attLevel) + " db", 140, 225);
+  Serial.println(realAmplitude);
 }
 
 char* format_frequency(unsigned volatile long frequency) {
@@ -617,10 +617,129 @@ char* format_frequency(unsigned volatile long frequency) {
     return output;
 }
 
+void resetATTPins() {
+  digitalWrite(ATT1, LOW);
+  digitalWrite(ATT2, LOW);
+  digitalWrite(ATT3, LOW);
+  digitalWrite(ATT4, LOW);
+  digitalWrite(ATT5, LOW);
+  digitalWrite(ATT6, LOW);
+}
+
+void att10db() {
+  digitalWrite(ATT1, HIGH);
+  digitalWrite(ATT4, HIGH);
+  digitalWrite(ATT6, HIGH);
+  delay(10);
+  digitalWrite(ATT1, LOW);
+  digitalWrite(ATT4, LOW);
+  digitalWrite(ATT6, LOW);
+  showATT();
+}
+
+void att20db() {
+  digitalWrite(ATT2, HIGH);
+  digitalWrite(ATT4, HIGH);
+  digitalWrite(ATT5, HIGH);
+  delay(10);
+  digitalWrite(ATT2, LOW);
+  digitalWrite(ATT4, LOW);
+  digitalWrite(ATT5, LOW);
+  showATT();
+}
+
+void att30db() {
+  digitalWrite(ATT1, HIGH);
+  digitalWrite(ATT4, HIGH);
+  digitalWrite(ATT5, HIGH);
+  delay(10);
+  digitalWrite(ATT1, LOW);
+  digitalWrite(ATT4, LOW);
+  digitalWrite(ATT5, LOW);
+  showATT();
+}
+
+void att40db() {
+  digitalWrite(ATT2, HIGH);
+  digitalWrite(ATT3, HIGH);
+  digitalWrite(ATT6, HIGH);
+  delay(10);
+  digitalWrite(ATT2, LOW);
+  digitalWrite(ATT3, LOW);
+  digitalWrite(ATT6, LOW);
+  showATT();
+}
+
+void att50db() {
+  digitalWrite(ATT1, HIGH);
+  digitalWrite(ATT3, HIGH);
+  digitalWrite(ATT6, HIGH);
+  delay(10);
+  digitalWrite(ATT1, LOW);
+  digitalWrite(ATT3, LOW);
+  digitalWrite(ATT6, LOW);
+  showATT();
+}
+
+void att60db() {
+  digitalWrite(ATT2, HIGH);
+  digitalWrite(ATT3, HIGH);
+  digitalWrite(ATT5, HIGH);
+  delay(10);
+  digitalWrite(ATT2, LOW);
+  digitalWrite(ATT3, LOW);
+  digitalWrite(ATT5, LOW);
+  showATT();
+}
+
+void att70db() {
+  digitalWrite(ATT1, HIGH);
+  digitalWrite(ATT3, HIGH);
+  digitalWrite(ATT5, HIGH);
+  delay(10);
+  digitalWrite(ATT1, LOW);
+  digitalWrite(ATT3, LOW);
+  digitalWrite(ATT5, LOW);
+  showATT();
+}
+
+void resetATT() {
+  digitalWrite(ATT2, HIGH);
+  digitalWrite(ATT4, HIGH);
+  digitalWrite(ATT6, HIGH);
+  delay(10);
+  digitalWrite(ATT2, LOW);
+  digitalWrite(ATT4, LOW);
+  digitalWrite(ATT6, LOW);
+  showATT();
+}
+
+void checkATT() {
+  Serial3.println("F"+String(15000000));
+  Serial3.println("E");
+  mylcd.Print_String("ATT: ", FRAME_SPACING, 225);
+  att10db();
+  delay(2000);
+  att20db();
+  delay(2000);
+  att30db();
+  delay(2000);
+  att40db();
+  delay(2000);
+  att50db();
+  delay(2000);
+  att60db();
+  delay(2000);
+  att70db();
+  delay(2000);
+  resetATT();
+  Serial3.println("D");
+}
+
 void setup() {
   Serial.begin(9600);
   Serial3.begin(115200);
-
+  Serial3.println("P"+String(realAmplitude));
   mylcd.Init_LCD();
   mylcd.Fill_Screen(BACKGROUND_COLOR);
   mylcd.Set_Rotation(3); 
@@ -640,16 +759,18 @@ void setup() {
   my_touch.TP_Set_Rotation(3);
   my_touch.TP_Init(mylcd.Get_Rotation(),mylcd.Get_Display_Width(),mylcd.Get_Display_Height()); 
 
-  pinMode(BCD1, OUTPUT);
-  pinMode(BCD2, OUTPUT);
-  pinMode(BCD3, OUTPUT);
-  pinMode(BCD4, OUTPUT);
-  pinMode(LNA_PIN, OUTPUT);
-  digitalWrite(BCD1, LOW); 
-  digitalWrite(BCD2, LOW); 
-  digitalWrite(BCD3, LOW); 
-  digitalWrite(BCD4, LOW);
-  digitalWrite(LNA_PIN, lnaEnabled);
+  //digitalWrite(LNA_PIN, lnaEnabled);
+  pinMode(ATT1, OUTPUT);
+  pinMode(ATT2, OUTPUT);
+  pinMode(ATT3, OUTPUT);
+  pinMode(ATT4, OUTPUT);
+  pinMode(ATT5, OUTPUT);
+  pinMode(ATT6, OUTPUT);
+
+  resetATTPins();
+  resetATT();
+
+  //checkATT();
 
   // Rotary pulses are INPUTs
   pinMode(EncoderPinCLK, INPUT);
@@ -657,17 +778,20 @@ void setup() {
   pinMode(EncoderPinSW, INPUT_PULLUP);
 
   Serial3.println("F"+String(frequency));
-  attenuator.begin();
 
   // Attach the routine to service the interrupts
   attachInterrupt(digitalPinToInterrupt(EncoderPinCLK), isr, LOW);
  
   show_frequency();
-  set_bpf(frequency);
+  //set_bpf(frequency);
   Serial.println("Start");
 }
 
 void loop() {
+  if (lastAttValue != attValue) {
+    changeATTValue();
+    lastAttValue = attValue;
+  }
   //Encoder pressed
   if (!digitalRead(EncoderPinSW)) {
     unsigned long currentTime = millis();
@@ -680,7 +804,7 @@ void loop() {
     
     // long press handle
     while (!digitalRead(EncoderPinSW)) {
-      if (millis() - currentTime >= longPressDuration) {
+      if ((millis() - currentTime >= longPressDuration) && !longPressDetected) {
         longClickTime = millis();
         longPressDetected = true;
         Serial.println("Long press = true");
@@ -690,21 +814,21 @@ void loop() {
             Serial.println(sweepMenu);
             waitingForSecondClick = false;
             sweepChangeMenu();
-            delay(500);
+            //delay(500);
         } else {
           if (genMenu !=4) genMenu++; else genMenu = 0;
           Serial.println("Gen menu item:");
           Serial.println(genMenu);
           waitingForSecondClick = false;
           genChangeMenu();
-          delay(500);
+          //delay(500);
         }
       }
     }
 
     // double click
     if (waitingForSecondClick && (currentTime - lastPressTime <= doubleClickInterval)) {
-      if (!sweepMode) { 
+      /*if (!sweepMode) { 
         Serial.println("Sweep mode");
         show_sweep();
         sweepMode = true; 
@@ -712,7 +836,8 @@ void loop() {
         sweepMode = false;
         Serial.println("Generator mode");
         show_frequency();
-      }
+      }*/
+      checkATT();
       waitingForSecondClick = false;
     } else {
       waitingForSecondClick = true;
@@ -739,7 +864,7 @@ void loop() {
       Serial.print(frequency > last_frequency ? "Up  :" : "Down:");
       Serial.println(format_frequency(frequency));
       changeGenFrequency();
-      set_bpf(frequency);
+      //set_bpf(frequency);
       Serial3.println("F"+String(frequency));
       last_frequency = frequency;
     }

@@ -6,7 +6,7 @@
 Frontend for Gra&Afch AD9910 module.<br>
 It has touch screen (ILI9488)/Encoder controls.<br>
 BCD code output for external filters.<br>
-LNA + ATT (PE4302) controls.<br><br>
+LNA + ATT (Agilent 10-70db ATT) controls.<br><br>
 
 ### AD9851 branch:
 <br>
