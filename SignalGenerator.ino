@@ -450,7 +450,7 @@ void changeOutput() {
 void touchProcess() {
   if (my_touch.TP_Get_State()&TP_PRES_DOWN) 
   {
-    delay(200);
+    //delay(200);
     if (sweepMode) {
         if ((my_touch.y<=50) && (my_touch.y>=25)) { 
           sweepMenu=0; 
