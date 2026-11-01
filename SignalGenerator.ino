@@ -117,6 +117,25 @@ int maxAmplitudeSweep = 10;
 unsigned int attValue = 0;
 unsigned int lastAttValue = 0;
 
+// Amplitude calibration maps the gain sent to the DDS module to a corrected
+// value. Keep the points ordered by requestedGainDbm. Values between two
+// measured points are linearly interpolated; outside the measured range the
+// uncalibrated value is used.
+//
+// The table is intentionally empty until the generator can be measured.
+// Replace the empty row and add as many measured points as required, e.g.:
+//   { -20, -19 },  // requesting -20 dBm needs P-19
+//   {   0,   1 },  // requesting   0 dBm needs P1
+struct AmplitudeCalibrationPoint {
+  int16_t requestedGainDbm;
+  int16_t calibratedGainDbm;
+};
+
+const int16_t EMPTY_CALIBRATION_VALUE = -32768;
+const AmplitudeCalibrationPoint amplitudeCalibration[] = {
+  { EMPTY_CALIBRATION_VALUE, EMPTY_CALIBRATION_VALUE }
+};
+
 // Killswitch :)
 volatile bool outputEnabled = false;
 
@@ -279,9 +298,48 @@ void isr() {
   }
 }
 
+int calibratedGainFor(int requestedGainDbm) {
+  bool haveLower = false;
+  bool haveUpper = false;
+  AmplitudeCalibrationPoint lower;
+  AmplitudeCalibrationPoint upper;
+
+  const size_t pointCount = sizeof(amplitudeCalibration) /
+                            sizeof(amplitudeCalibration[0]);
+  for (size_t i = 0; i < pointCount; i++) {
+    const AmplitudeCalibrationPoint point = amplitudeCalibration[i];
+    if (point.requestedGainDbm == EMPTY_CALIBRATION_VALUE ||
+        point.calibratedGainDbm == EMPTY_CALIBRATION_VALUE) {
+      continue;
+    }
+
+    if (point.requestedGainDbm == requestedGainDbm) {
+      return point.calibratedGainDbm;
+    }
+    if (point.requestedGainDbm < requestedGainDbm &&
+        (!haveLower || point.requestedGainDbm > lower.requestedGainDbm)) {
+      lower = point;
+      haveLower = true;
+    }
+    if (point.requestedGainDbm > requestedGainDbm &&
+        (!haveUpper || point.requestedGainDbm < upper.requestedGainDbm)) {
+      upper = point;
+      haveUpper = true;
+    }
+  }
+
+  if (!haveLower || !haveUpper) return requestedGainDbm;
+
+  const long inputSpan = upper.requestedGainDbm - lower.requestedGainDbm;
+  const long outputSpan = upper.calibratedGainDbm - lower.calibratedGainDbm;
+  return lower.calibratedGainDbm +
+         ((long)(requestedGainDbm - lower.requestedGainDbm) * outputSpan) /
+         inputSpan;
+}
+
 void setGain() {
   char buf[16];
-  snprintf(buf, sizeof(buf), "P%d", realAmplitude);
+  snprintf(buf, sizeof(buf), "P%d", calibratedGainFor(realAmplitude));
   Serial3.println(buf);
 }
 
@@ -1093,11 +1151,7 @@ void showSplashScreen() {
 void setup() {
   Serial.begin(9600);
   Serial3.begin(115200);
-  {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "P%d", realAmplitude);
-    Serial3.println(buf);
-  }
+  setGain();
   Serial3.println("D");
   mylcd.Init_LCD();
   mylcd.Set_Rotation(3); 
