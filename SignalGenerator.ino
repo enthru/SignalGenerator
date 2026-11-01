@@ -3,12 +3,13 @@
 #include <LCDWIKI_GUI.h>
 #include <LCDWIKI_KBV.h>
 #include <LCDWIKI_TOUCH.h> 
-#include <PE43xx.h>
 #include <stdio.h>
 #include <string.h>
 
+const int TouchIrqPin = 44;
+
 LCDWIKI_KBV mylcd(ILI9488,40,38,39,43,41);
-LCDWIKI_TOUCH my_touch(53,52,50,51,44);
+LCDWIKI_TOUCH my_touch(53,52,50,51,TouchIrqPin);
 
 #define BLACK   0x0000
 #define BLUE    0x001F
@@ -19,477 +20,975 @@ LCDWIKI_TOUCH my_touch(53,52,50,51,44);
 #define YELLOW  0xFFE0
 #define WHITE   0xFFFF
 
-#define TEXT_COLOR 0x0000
-#define BACKGROUND_COLOR 0x6C64
+// --- Dark instrument theme (RGB565) ---
+#define BACKGROUND_COLOR 0x0883  // graphite screen background
+#define PANEL_COLOR      0x10E5  // card / panel fill
+#define PANEL_SEL_COLOR  0x1928  // active tab tint
+#define TEXT_COLOR       0xE77E  // primary (near-white) text
+#define TEXT_DIM_COLOR   0x7C54  // dim field labels
+#define ACCENT_COLOR     0x3699  // cyan accent: frequency, units, cursor, tabs
+#define AMBER_COLOR      0xF524  // ATT value
+#define LED_ON_COLOR     0x36AF  // output enabled
+#define LED_OFF_COLOR    0x530D  // output disabled
 #define FRAME_SPACING 3
-#define ARROW "<==="
-#define ARROW_COLOR 0xA145
 
-// Filter pins
+// Layout: screen is 480x320 (Set_Rotation(3)). Panels span MX..MX+CW.
+#define MX 8    // left/right margin
+#define CW 464  // content width
+
+// Frequency-step footer geometry (shared by Generator and Sweep screens).
+#define STEP_PANEL_Y       284
+#define STEP_BUTTON_Y      288
+#define STEP_BUTTON_W      36
+#define STEP_BUTTON_H      24
+#define STEP_LEFT_BUTTON_X 158
+#define STEP_RIGHT_BUTTON_X 428
+#define STEP_VALUE_X       202
+#define STEP_VALUE_W       220
+
+// AD9851 branch hardware.  Keep these pins separate from the display and
+// encoder pins used by the shared UI.
 const byte BCD1 = 6;
 const byte BCD2 = 5;
 const byte BCD3 = 4;
 const byte BCD4 = 3;
-
-// LNA pin
-#define LNA_PIN 11
-
-// attenuator
-#define ATTENUATOR_PIN_LE 16
-#define ATTENUATOR_PIN_CLK 15
-#define ATTENUATOR_PIN_DATA 14
-PE43xx attenuator(ATTENUATOR_PIN_LE, ATTENUATOR_PIN_CLK, ATTENUATOR_PIN_DATA, PE4302);
-
-void set_bpf(unsigned volatile long frequency) {
-  if ((frequency >= 1800000) && (frequency <= 2000000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("BPF 160m"); }
-  if ((frequency >= 3500000) && (frequency <= 3800000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("BPF 80m"); }
-  if ((frequency >= 7000000) && (frequency <= 7100000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("BPF 40m"); }
-  if ((frequency >= 10100000) && (frequency <= 10150000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("BPF 30m"); }
-  if ((frequency >= 14000000) && (frequency <= 14350000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("BPF 20m"); }
-  if ((frequency >= 18068000) && (frequency <= 18168000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("BPF 17m"); }
-  if ((frequency >= 21000000) && (frequency <= 21450000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("BPF 15m"); }
-  if ((frequency >= 24890000) && (frequency <= 24990000)) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, HIGH); Serial.println("BPF 12m"); }
-  if ((frequency >= 28000000) && (frequency <= 29700000)) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, HIGH); Serial.println("BPF 10m"); }
-  updateBCD();
-}
-
-void set_lpf(unsigned volatile long frequency) {
-  if (frequency <= 2000000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 160m"); }
-  if (frequency <= 3800000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 80m"); }
-  if (frequency <= 7100000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 40m"); }
-  if (frequency <= 10150000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, LOW); digitalWrite(BCD4, LOW); Serial.println("LPF 30m"); }
-  if (frequency <= 14350000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("LPF 20m"); }
-  if (frequency <= 18168000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("LPF 17m"); }
-  if (frequency <= 21450000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("LPF 15m"); }
-  if (frequency <= 24990000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, HIGH); digitalWrite(BCD3, HIGH); digitalWrite(BCD4, LOW); Serial.println("LPF 12m"); }
-  if (frequency <= 29700000) { digitalWrite(BCD1, LOW); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, HIGH); Serial.println("LPF 10m"); }
-  if (frequency <= 50000000) { digitalWrite(BCD1, HIGH); digitalWrite(BCD2, LOW); digitalWrite(BCD3, LOW); digitalWrite(BCD4, HIGH); Serial.println("LPF 6m"); }
-  updateBCD();
-}
-
-//DDS pins
+const byte LNA_PIN = 11;
+const byte ATTENUATOR_PIN_LE = 16;
+const byte ATTENUATOR_PIN_CLK = 15;
+const byte ATTENUATOR_PIN_DATA = 14;
 const byte dds_RESET = 10;
-const byte dds_DATA  = 9;
-const byte dds_LOAD  = 8;
+const byte dds_DATA = 9;
+const byte dds_LOAD = 8;
 const byte dds_CLOCK = 7;
 
 const unsigned long max_frequency_step = 10000000; //Max Frequency step
 const unsigned int min_frequency_step = 1;
-const unsigned long max_frequency = 30000000; //Max Frequency
+const unsigned long max_frequency = 30000000; // AD9851 board/filter limit
 const int min_frequency=25; // Minimum Frequency
 
 unsigned long last_frequency = 14000000;
-unsigned long frequency_step = 100000;
+volatile unsigned long frequency_step = 100000;
 
 // Rotary encoder
-
 const int EncoderPinCLK = 2; 
 const int EncoderPinDT = 12;  
 const int EncoderPinSW = 13;  
+const unsigned long ENCODER_MIN_PULSE_US = 1000;
+const unsigned long ENCODER_BUTTON_DEBOUNCE_MS = 30;
+const unsigned long AMPLITUDE_BLINK_INTERVAL_MS = 400;
+const unsigned long AMPLITUDE_EDIT_IDLE_MS = 700;
 
 // Updated by the ISR (Interrupt Service Routine)
 unsigned volatile long frequency = 14000000;
 
-// Double click stuff
-unsigned long lastPressTime = 0;
-const int doubleClickInterval = 300;
-bool waitingForSecondClick = false;
-
-// Long click stuff
-const int longPressDuration = 500;
-const int delayAfterLongClick = 1000;
-bool longPressDetected = false;
-unsigned long longClickTime = 0;
-
 // Sweep mode
-bool sweepMode = false;
+volatile bool sweepMode = false;
 unsigned volatile long sweepStartFrequency =  1000000;
 unsigned volatile long sweepStopFrequency =  2000000;
 unsigned volatile long sweepCurrentFrequency =  1000001;
 
-unsigned int sweepStep = 1;
+unsigned volatile long sweepLastStartFrequency = 1000000;
+unsigned volatile long sweepLastStopFrequency = 2000000;
 
-unsigned int sweepPoints = 10000;
+unsigned int sweepStep = 1;
+volatile int sweepTime = 10;
+int sweepLastTime = 10;
+
 bool sweepModeStart = true;
 bool sweepModeStop = false;
 bool sweepModeStep = false;
 // sweepMenu is to determine which parameter we are changing in sweep mode
+// 0 - Output enabled
 // 1 - Start freq.
 // 2 - Stop freq.
-// 3 - Sweep points
-// 4 - ATT
-// 5 - LNA
-short sweepMenu = 1;
+// 3 - Sweep time
+// 4 - Amplitude
+volatile short sweepMenu = 1;
 
 // genMenu - same as sweepmenu
+// 0 - Output enabled
 // 1 - Freq.
-// 2 - ATT
-// 3 - LNA
-short genMenu = 1;
+// 2 - Amplitude
+volatile short genMenu = 1;
 
-// ATT value
-float attLevel = 0;
-float attStep = 0.5;
+// Amplitude
+int realAmplitude = 0;
+volatile int amplitude = 0;
+int appliedAmplitude = 0;
+int minAmplitude = -31;
+int maxAmplitude = 0;
+int minAmplitudeSweep = -31;
+int maxAmplitudeSweep = 0;
+unsigned int attValue = 0;
+unsigned int lastAttValue = 0xffff;
+volatile bool lnaEnabled = false;
 
-// LNA
-bool lnaEnabled = false;
+// Level calibration maps requested relative output level to a corrected
+// PE4302 setting. Keep the points ordered by requestedLevelDb. Values between two
+// measured points are linearly interpolated; outside the measured range the
+// uncalibrated value is used.
+//
+// The table is intentionally empty until the generator can be measured.
+// Replace the empty row and add as many measured points as required, e.g.:
+//   { -20, -19 },  // requesting -20 dB needs a corrected -19 dB setting
+//   {   0,  -1 },  // requesting   0 dB needs a corrected  -1 dB setting
+struct AmplitudeCalibrationPoint {
+  int16_t requestedLevelDb;
+  int16_t calibratedLevelDb;
+};
 
-void isr ()  {
-  static unsigned long lastInterruptTime = 0;
-  unsigned long interruptTime = millis();
+const int16_t EMPTY_CALIBRATION_VALUE = -32768;
+const AmplitudeCalibrationPoint amplitudeCalibration[] = {
+  { EMPTY_CALIBRATION_VALUE, EMPTY_CALIBRATION_VALUE }
+};
 
-  if (interruptTime - lastInterruptTime > 5) {
+// Killswitch :)
+volatile bool outputEnabled = false;
+
+//touch related
+bool wasPressed = false;
+const unsigned long TOUCH_MIN_PRESS_MS = 25;
+unsigned long touchPressStartedAt = 0;
+uint16_t touchDownX = 0;
+uint16_t touchDownY = 0;
+uint16_t touchLastX = 0;
+uint16_t touchLastY = 0;
+
+//amplitude step
+volatile unsigned int ampStep = 1;
+
+// UI-refresh flags: the ISR only mutates state and raises a flag; loop()
+// does the LCD drawing and Serial output so no slow/blocking work runs
+// inside the interrupt.
+volatile bool uiOutputChanged = false;
+volatile bool uiAmplitudeChanged = false;
+volatile bool uiSweepStartChanged = false;
+volatile bool uiSweepStopChanged = false;
+volatile bool uiSweepTimeChanged = false;
+volatile bool uiLnaChanged = false;
+
+unsigned long sweepCycleStartedUs = 0;
+
+void setupAttenuator() {
+  pinMode(ATTENUATOR_PIN_LE, OUTPUT);
+  pinMode(ATTENUATOR_PIN_CLK, OUTPUT);
+  pinMode(ATTENUATOR_PIN_DATA, OUTPUT);
+  digitalWrite(ATTENUATOR_PIN_LE, LOW);
+  digitalWrite(ATTENUATOR_PIN_CLK, LOW);
+  digitalWrite(ATTENUATOR_PIN_DATA, LOW);
+}
+
+void setAttenuation(unsigned int levelDb) {
+  // PE4302 uses a 6-bit half-dB word, shifted MSB first while LE is low.
+  byte word = (byte)min(63U, levelDb * 2U);
+  digitalWrite(ATTENUATOR_PIN_LE, LOW);
+  for (int8_t bit = 5; bit >= 0; bit--) {
+    digitalWrite(ATTENUATOR_PIN_DATA, word & (1 << bit) ? HIGH : LOW);
+    digitalWrite(ATTENUATOR_PIN_CLK, HIGH);
+    delayMicroseconds(1);
+    digitalWrite(ATTENUATOR_PIN_CLK, LOW);
+    delayMicroseconds(1);
+  }
+  digitalWrite(ATTENUATOR_PIN_LE, HIGH);
+  delayMicroseconds(1);
+  digitalWrite(ATTENUATOR_PIN_LE, LOW);
+}
+
+// Cached last-drawn text per field, so the change* helpers repaint only the
+// character cells that actually changed instead of the whole field. Reset to
+// "" whenever the screen is fully cleared (show_frequency / show_sweep).
+char freqCache[24]  = "";
+char ampCache[16]   = "";
+char attCache[16]   = "";
+char startCache[24] = "";
+char stopCache[24]  = "";
+char timeCache[8]   = "";
+
+// A changed level is only applied to the PE4302 when the
+// encoder button is pressed. Blink the requested value until that commit.
+bool amplitudeTextVisible = true;
+unsigned long amplitudeBlinkLastToggle = 0;
+unsigned long amplitudeLastEditTime = 0;
+
+// Rect of the currently selected field's accent border, so selectField()
+// erases only the previous border instead of the whole screen. selW==0 means
+// "no border drawn yet" (reset on every full repaint).
+int16_t selX = 0, selY = 0, selW = 0, selH = 0;
+
+// Underline the frequency digit controlled by the encoder. The selected
+// decimal place is represented by frequency_step (1 Hz .. 100 MHz), so the
+// same cursor works for generator frequency and sweep start/stop fields.
+int16_t digitCursorX = 0, digitCursorY = 0, digitCursorW = 0;
+
+void applyEncoderStep(bool directionLow) {
     if (!sweepMode) {
       switch (genMenu) {
+      case 0:
+        outputEnabled = !outputEnabled;
+        uiOutputChanged = true;
+        break;
       case 1:
-        if (digitalRead(EncoderPinDT) == LOW)
-        {
-          frequency=frequency-frequency_step;
+        if (directionLow) {
+          // clamp at minimum instead of underflowing (unsigned) and wrapping to max
+          frequency = (frequency > (unsigned long)min_frequency + frequency_step) ? frequency - frequency_step : (unsigned long)min_frequency;
+        } else {
+          frequency = (frequency < max_frequency - frequency_step) ? frequency + frequency_step : max_frequency;
         }
-        else {
-          frequency=frequency+frequency_step;
-        }
-        frequency = min(max_frequency, max(min_frequency, frequency));
         break;
         case 2:
-          changeLNA();
+          if (directionLow) {
+            if (amplitude > minAmplitude) {
+              amplitude = amplitude - ampStep;
+            }  else {
+              amplitude = minAmplitude;
+            }
+          }
+          else {
+            if (amplitude < maxAmplitude) {
+              amplitude = amplitude + ampStep;
+            } else {
+              amplitude = maxAmplitude;
+            }
+          }
+          uiAmplitudeChanged = true;
           break;
         case 3:
-          if (digitalRead(EncoderPinDT) == LOW) {
-            setATT(false);
-          } else { setATT(true); }
+          lnaEnabled = !lnaEnabled;
+          uiLnaChanged = true;
           break;
       }
-      lastInterruptTime = interruptTime;
-    } else { 
+    } else {
       switch (sweepMenu) {
+        case 0:
+          outputEnabled = !outputEnabled;
+          uiOutputChanged = true;
+          break;
         case 1:
-          if (digitalRead(EncoderPinDT) == LOW) {
-            sweepStartFrequency = sweepStartFrequency - frequency_step;
+          if (directionLow) {
+            sweepStartFrequency = (sweepStartFrequency > (unsigned long)min_frequency + frequency_step) ? sweepStartFrequency - frequency_step : (unsigned long)min_frequency;
           } else {
-            sweepStartFrequency = sweepStartFrequency + frequency_step;
+            sweepStartFrequency = (sweepStartFrequency < max_frequency - frequency_step) ? sweepStartFrequency + frequency_step : max_frequency;
           }
-          sweepStartFrequency = min(max_frequency, max(min_frequency, sweepStartFrequency));
-          if (sweepStartFrequency > sweepStopFrequency) { sweepStopFrequency = sweepStartFrequency; changeStop(); }
-          sweepStep = (sweepStopFrequency - sweepStartFrequency)/sweepPoints;
-          if (sweepStep == 0) sweepStep = 1;
+          if (sweepStartFrequency > sweepStopFrequency) { sweepStopFrequency = sweepStartFrequency; uiSweepStopChanged = true; }
           sweepCurrentFrequency = sweepStartFrequency;
-          Serial.println("Sweep start freq.:");
-          Serial.println(format_frequency(sweepStartFrequency));
-          Serial.println(sweepStep);
-          changeStart();
+          uiSweepStartChanged = true;
           break;
         case 2:
-          if (digitalRead(EncoderPinDT) == LOW) {
-            sweepStopFrequency = sweepStopFrequency - frequency_step;
+          if (directionLow) {
+            sweepStopFrequency = (sweepStopFrequency > (unsigned long)min_frequency + frequency_step) ? sweepStopFrequency - frequency_step : (unsigned long)min_frequency;
           } else {
-            sweepStopFrequency = sweepStopFrequency + frequency_step;
+            sweepStopFrequency = (sweepStopFrequency < max_frequency - frequency_step) ? sweepStopFrequency + frequency_step : max_frequency;
           }
-          sweepStopFrequency = min(max_frequency, max(min_frequency, sweepStopFrequency));
-          if (sweepStopFrequency < sweepStartFrequency) { sweepStartFrequency = sweepStopFrequency; changeStart(); }
-          sweepStep = (sweepStopFrequency - sweepStartFrequency)/sweepPoints;
-          if (sweepStep == 0) sweepStep = 1;
+          if (sweepStopFrequency < sweepStartFrequency) { sweepStartFrequency = sweepStopFrequency; uiSweepStartChanged = true; }
           sweepCurrentFrequency = sweepStartFrequency;
-          Serial.println("Sweep stop freq.:");
-          Serial.println(format_frequency(sweepStopFrequency));
-          Serial.println(sweepStep);
-          changeStop();
+          uiSweepStopChanged = true;
           break;
         case 3:
-          if (digitalRead(EncoderPinDT) == LOW) {
-            if (sweepPoints > 1000) sweepPoints = sweepPoints - 1000;
+          if (directionLow) {
+            if (sweepTime >= 2) sweepTime = sweepTime - 1;
           } else {
-            if (sweepPoints <= 49100) sweepPoints = sweepPoints + 1000;
+            if (sweepTime <= 99) sweepTime = sweepTime + 1;
           }
-          sweepStep = (sweepStopFrequency - sweepStartFrequency)/sweepPoints;
-          if (sweepStep == 0) sweepStep = 1;
-          sweepCurrentFrequency = sweepStartFrequency;
-          Serial.println("Sweep points:");
-          Serial.println(sweepPoints);
-          Serial.println(sweepStep);
-          changePoints();
+          uiSweepTimeChanged = true;
           break;
         case 4:
-          changeLNA();
+          if (directionLow) {
+            if (amplitude > minAmplitudeSweep) {
+              amplitude = amplitude - 10;
+            }  else {
+              amplitude = minAmplitudeSweep;
+            }
+          }
+          else {
+            if (amplitude < maxAmplitudeSweep) {
+              amplitude = amplitude + 10;
+            } else {
+              amplitude = maxAmplitudeSweep;
+            }
+          }
+          uiAmplitudeChanged = true;
           break;
         case 5:
-          if (digitalRead(EncoderPinDT) == LOW) {
-            setATT(false);
-          } else { setATT(true); }
-          changeATT();
+          lnaEnabled = !lnaEnabled;
+          uiLnaChanged = true;
           break;
       }
-      lastInterruptTime = interruptTime; 
     }
+}
+
+void isr() {
+  static unsigned long lowSince = 0;
+  static bool pendingLowPulse = false;
+  static bool pendingDirectionLow = false;
+
+  unsigned long now = micros();
+  bool clockLow = digitalRead(EncoderPinCLK) == LOW;
+
+  if (clockLow) {
+    // Start measuring a candidate LOW pulse. A bounce pulse normally returns
+    // HIGH very quickly; a real encoder phase stays LOW much longer.
+    if (!pendingLowPulse) {
+      lowSince = now;
+      pendingDirectionLow = digitalRead(EncoderPinDT) == LOW;
+      pendingLowPulse = true;
+    }
+  } else if (pendingLowPulse) {
+    if (now - lowSince >= ENCODER_MIN_PULSE_US) {
+      applyEncoderStep(pendingDirectionLow);
+    }
+    pendingLowPulse = false;
+  }
+}
+
+int calibratedLevelFor(int requestedLevelDb) {
+  bool haveLower = false;
+  bool haveUpper = false;
+  AmplitudeCalibrationPoint lower;
+  AmplitudeCalibrationPoint upper;
+
+  const size_t pointCount = sizeof(amplitudeCalibration) /
+                            sizeof(amplitudeCalibration[0]);
+  for (size_t i = 0; i < pointCount; i++) {
+    const AmplitudeCalibrationPoint point = amplitudeCalibration[i];
+    if (point.requestedLevelDb == EMPTY_CALIBRATION_VALUE ||
+        point.calibratedLevelDb == EMPTY_CALIBRATION_VALUE) {
+      continue;
+    }
+
+    if (point.requestedLevelDb == requestedLevelDb) {
+      return point.calibratedLevelDb;
+    }
+    if (point.requestedLevelDb < requestedLevelDb &&
+        (!haveLower || point.requestedLevelDb > lower.requestedLevelDb)) {
+      lower = point;
+      haveLower = true;
+    }
+    if (point.requestedLevelDb > requestedLevelDb &&
+        (!haveUpper || point.requestedLevelDb < upper.requestedLevelDb)) {
+      upper = point;
+      haveUpper = true;
+    }
+  }
+
+  if (!haveLower || !haveUpper) return requestedLevelDb;
+
+  const long inputSpan = upper.requestedLevelDb - lower.requestedLevelDb;
+  const long outputSpan = upper.calibratedLevelDb - lower.calibratedLevelDb;
+  return lower.calibratedLevelDb +
+         ((long)(requestedLevelDb - lower.requestedLevelDb) * outputSpan) /
+         inputSpan;
+}
+
+void setFilterCode(byte code) {
+  digitalWrite(BCD1, code & 0x01 ? HIGH : LOW);
+  digitalWrite(BCD2, code & 0x02 ? HIGH : LOW);
+  digitalWrite(BCD3, code & 0x04 ? HIGH : LOW);
+  digitalWrite(BCD4, code & 0x08 ? HIGH : LOW);
+}
+
+void set_bpf(unsigned long value) {
+  byte code = 0;
+  if      (value >= 1800000UL  && value <= 2000000UL)  code = 1;
+  else if (value >= 3500000UL  && value <= 3800000UL)  code = 2;
+  else if (value >= 7000000UL  && value <= 7100000UL)  code = 3;
+  else if (value >= 10100000UL && value <= 10150000UL) code = 4;
+  else if (value >= 14000000UL && value <= 14350000UL) code = 5;
+  else if (value >= 18068000UL && value <= 18168000UL) code = 6;
+  else if (value >= 21000000UL && value <= 21450000UL) code = 7;
+  else if (value >= 24890000UL && value <= 24990000UL) code = 8;
+  else if (value >= 28000000UL && value <= 29700000UL) code = 9;
+  setFilterCode(code);
+}
+
+void applyLnaState() {
+  digitalWrite(LNA_PIN, lnaEnabled ? HIGH : LOW);
+  showATT();
+}
+
+void setGain() {
+  int correctedLevel = calibratedLevelFor(amplitude);
+  if (correctedLevel > maxAmplitude) correctedLevel = maxAmplitude;
+  if (correctedLevel < minAmplitude) correctedLevel = minAmplitude;
+  realAmplitude = correctedLevel;
+  attValue = (unsigned int)(-correctedLevel);
+  setAttenuation(attValue);
+  lastAttValue = attValue;
+}
+
+// Redraw only the character cells that differ from the cached previous value.
+// Monospace glyphs are 6*sz wide, 8*sz tall. `bg` is the fill behind the field
+// (the panel colour, so cleared cells match the card, not the screen).
+void drawTextDiff(int16_t x, int16_t y, const char *text, char *cache, uint16_t bg, uint8_t sz) {
+  const int16_t charW = 6 * sz;
+  const int16_t charH = 8 * sz;
+  mylcd.Set_Text_Size(sz);
+  int16_t tlen = strlen(text);
+  int16_t clen = strlen(cache);
+  for (int16_t i = 0; i < tlen; i++) {
+    if (i >= clen || cache[i] != text[i]) {
+      char cbuf[2] = { text[i], '\0' };
+      mylcd.Fill_Rect(x + i * charW, y, charW, charH, bg);
+      mylcd.Print_String(cbuf, x + i * charW, y);
+    }
+  }
+  // erase trailing cells left over from a previously longer value
+  for (int16_t i = tlen; i < clen; i++) {
+    mylcd.Fill_Rect(x + i * charW, y, charW, charH, bg);
+  }
+  strcpy(cache, text);
+}
+
+// Filled rounded card at PANEL_COLOR.
+void panel(int16_t x, int16_t y, int16_t w, int16_t h) {
+  mylcd.Set_Draw_color(PANEL_COLOR);
+  mylcd.Fill_Round_Rectangle(x, y, x + w, y + h, 6);
+}
+
+// Dim uppercase field label (size 2).
+void labelDim(const char *t, int16_t x, int16_t y) {
+  mylcd.Set_Text_Size(2);
+  mylcd.Set_Text_colour(TEXT_DIM_COLOR);
+  mylcd.Print_String(t, x, y);
+}
+
+// LED dot + ON/OFF text for the OUTPUT field, vertically centred on cy.
+void drawOutputState(int16_t cy) {
+  mylcd.Set_Text_Size(2);
+  if (outputEnabled) {
+    mylcd.Set_Draw_color(LED_ON_COLOR);
+    mylcd.Fill_Circle(150, cy, 7);
+    mylcd.Set_Text_colour(TEXT_COLOR);
+    mylcd.Print_String("ON", 172, cy - 8);
+  } else {
+    mylcd.Set_Draw_color(LED_OFF_COLOR);
+    mylcd.Fill_Circle(150, cy, 7);
+    mylcd.Set_Text_colour(TEXT_DIM_COLOR);
+    mylcd.Print_String("OFF", 172, cy - 8);
+  }
+}
+
+// Decorative sawtooth in the sweep "SWEEP" panel (drawn only on full repaint).
+void drawRamp() {
+  mylcd.Set_Draw_color(ACCENT_COLOR);
+  const int16_t x0 = 150, x1 = 460, base = 214, peak = 190;
+  const int16_t teeth = 3;
+  int16_t tw = (x1 - x0) / teeth;
+  for (int16_t i = 0; i < teeth; i++) {
+    int16_t sx = x0 + i * tw;
+    mylcd.Draw_Line(sx, base, sx + tw, peak);   // rising ramp
+    mylcd.Draw_Line(sx + tw, peak, sx + tw, base); // fast retrace
+  }
+}
+
+// Two mode tabs across the top; the active one gets the accent tint + text.
+void drawTabs(bool sweep) {
+  mylcd.Set_Draw_color(sweep ? PANEL_COLOR : PANEL_SEL_COLOR);
+  mylcd.Fill_Round_Rectangle(MX, 4, MX + 229, 34, 4);
+  mylcd.Set_Draw_color(sweep ? PANEL_SEL_COLOR : PANEL_COLOR);
+  mylcd.Fill_Round_Rectangle(MX + 235, 4, MX + CW, 34, 4);
+  mylcd.Set_Text_Size(2);
+  mylcd.Set_Text_colour(sweep ? TEXT_DIM_COLOR : ACCENT_COLOR);
+  mylcd.Print_String("GENERATOR", MX + 58, 12);
+  mylcd.Set_Text_colour(sweep ? ACCENT_COLOR : TEXT_DIM_COLOR);
+  mylcd.Print_String("SWEEP", MX + 327, 12);
+}
+
+// Rounded frequency-step button with a two-stroke chevron. Drawing the icon
+// with lines (instead of a text glyph) keeps both arrows visually balanced.
+void drawStepButton(int16_t x, bool pointsRight) {
+  mylcd.Set_Draw_color(PANEL_SEL_COLOR);
+  mylcd.Fill_Round_Rectangle(x, STEP_BUTTON_Y,
+                             x + STEP_BUTTON_W, STEP_BUTTON_Y + STEP_BUTTON_H, 5);
+  mylcd.Set_Draw_color(ACCENT_COLOR);
+  mylcd.Draw_Round_Rectangle(x, STEP_BUTTON_Y,
+                             x + STEP_BUTTON_W, STEP_BUTTON_Y + STEP_BUTTON_H, 5);
+
+  int16_t cx = x + STEP_BUTTON_W / 2;
+  int16_t cy = STEP_BUTTON_Y + STEP_BUTTON_H / 2;
+  int16_t direction = pointsRight ? 1 : -1;
+  for (int16_t stroke = 0; stroke < 2; stroke++) {
+    mylcd.Draw_Line(cx - direction * 3 + stroke, cy - 6,
+                    cx + direction * 3 + stroke, cy);
+    mylcd.Draw_Line(cx + direction * 3 + stroke, cy,
+                    cx - direction * 3 + stroke, cy + 6);
+  }
+}
+
+// Repaint the step value centred between its arrow buttons.
+void drawStepValue() {
+  const char *value = format_frequency(frequency_step);
+  const int16_t textWidth = strlen(value) * 12; // size-2 glyph width
+  const int16_t valueX = STEP_VALUE_X + (STEP_VALUE_W - textWidth) / 2;
+  mylcd.Fill_Rect(STEP_VALUE_X, 292, STEP_VALUE_W, 16, PANEL_COLOR);
+  mylcd.Set_Text_Size(2);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  mylcd.Print_String(value, valueX, 292);
+}
+
+// Card-style footer used on both screens.
+void drawFrequencyStep() {
+  panel(MX, STEP_PANEL_Y, CW, 32);
+  labelDim("Freq. step:", 18, 292);
+  drawStepButton(STEP_LEFT_BUTTON_X, false);
+  drawStepButton(STEP_RIGHT_BUTTON_X, true);
+  drawStepValue();
+}
+
+unsigned long decimalStepForDigit(const char *text, int16_t digitIndex) {
+  unsigned long step = 1;
+  for (int16_t i = digitIndex + 1; text[i] && text[i] != ' '; i++) {
+    if (text[i] >= '0' && text[i] <= '9') {
+      if (step <= max_frequency_step / 10) step *= 10;
+    }
+  }
+  return step;
+}
+
+// Select the nearest displayed digit to a touch and translate its decimal
+// place into the encoder step. Separators and the unit text snap to the
+// nearest digit instead of becoming dead touch zones.
+void selectFrequencyDigit(unsigned long value, int16_t textX, uint8_t textSize,
+                          int16_t touchX) {
+  const char *text = format_frequency(value);
+  const int16_t len = strlen(text);
+  const int16_t charW = 6 * textSize;
+  int16_t index = (touchX - textX) / charW;
+  if (index < 0) index = 0;
+  if (index >= len) index = len - 1;
+
+  int16_t digitIndex = -1;
+  for (int16_t distance = 0; distance < len && digitIndex < 0; distance++) {
+    int16_t left = index - distance;
+    int16_t right = index + distance;
+    if (left >= 0 && text[left] >= '0' && text[left] <= '9') digitIndex = left;
+    else if (right < len && text[right] >= '0' && text[right] <= '9') digitIndex = right;
+  }
+  if (digitIndex < 0) return;
+
+  noInterrupts();
+  frequency_step = decimalStepForDigit(text, digitIndex);
+  interrupts();
+  changeStep();
+}
+
+void eraseFrequencyDigitCursor() {
+  if (digitCursorW) {
+    mylcd.Fill_Rect(digitCursorX, digitCursorY, digitCursorW, 3, PANEL_COLOR);
+    digitCursorW = 0;
+  }
+}
+
+void drawFrequencyDigitCursor(unsigned long value, int16_t textX,
+                              int16_t textY, uint8_t textSize) {
+  eraseFrequencyDigitCursor();
+  const char *text = format_frequency(value);
+  int16_t selectedIndex = -1;
+  for (int16_t i = 0; text[i] && text[i] != ' '; i++) {
+    if (text[i] >= '0' && text[i] <= '9' &&
+        decimalStepForDigit(text, i) == frequency_step) {
+      selectedIndex = i;
+      break;
+    }
+  }
+  if (selectedIndex < 0) return;
+
+  const int16_t charW = 6 * textSize;
+  digitCursorX = textX + selectedIndex * charW + 1;
+  digitCursorY = textY + 8 * textSize + 2;
+  digitCursorW = charW - 2;
+  mylcd.Set_Draw_color(ACCENT_COLOR);
+  mylcd.Fill_Rect(digitCursorX, digitCursorY, digitCursorW, 3, ACCENT_COLOR);
+}
+
+void drawSelectedFrequencyDigit() {
+  if (!sweepMode && genMenu == 1) {
+    drawFrequencyDigitCursor(frequency, 18, 74, 3);
+  } else if (sweepMode && sweepMenu == 1) {
+    drawFrequencyDigitCursor(sweepStartFrequency, 150, 84, 2);
+  } else if (sweepMode && sweepMenu == 2) {
+    drawFrequencyDigitCursor(sweepStopFrequency, 150, 120, 2);
+  } else {
+    eraseFrequencyDigitCursor();
+  }
+}
+
+void cycleFrequencyDigit() {
+  unsigned long editedValue = frequency;
+  if (sweepMode && sweepMenu == 1) editedValue = sweepStartFrequency;
+  else if (sweepMode && sweepMenu == 2) editedValue = sweepStopFrequency;
+  const char *text = format_frequency(editedValue);
+  int16_t firstDigit = 0;
+  while (text[firstDigit] && !(text[firstDigit] >= '0' && text[firstDigit] <= '9')) {
+    firstDigit++;
+  }
+  unsigned long highestDisplayedStep = decimalStepForDigit(text, firstDigit);
+
+  noInterrupts();
+  frequency_step = (frequency_step == min_frequency_step)
+                     ? highestDisplayedStep
+                     : frequency_step / 10;
+  interrupts();
+  changeStep();
+}
+
+// 2px rectangle outline used as the selection cursor.
+void drawBorder(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) {
+  mylcd.Set_Draw_color(c);
+  mylcd.Draw_Rectangle(x, y, x + w - 1, y + h - 1);
+  mylcd.Draw_Rectangle(x + 1, y + 1, x + w - 2, y + h - 2);
+}
+
+// Move the accent cursor: erase the previous field's border (repaint it in the
+// panel colour, inside the card) and draw the new one in ACCENT_COLOR.
+void selectField(int16_t x, int16_t y, int16_t w, int16_t h) {
+  // inset the border so it sits inside the rounded card, off the corner cut
+  x += 2; y += 2; w -= 4; h -= 4;
+  if (selW) { drawBorder(selX, selY, selW, selH, PANEL_COLOR); }
+  selX = x; selY = y; selW = w; selH = h;
+  drawBorder(x, y, w, h, ACCENT_COLOR);
+}
+
+void changeAmplitude() {
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%d db", amplitude);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  drawTextDiff(18, sweepMode ? 250 : 198, buf, ampCache, PANEL_COLOR, 3);
+  amplitudeTextVisible = true;
+  amplitudeBlinkLastToggle = millis();
+}
+
+void serviceAmplitudeBlink(unsigned long now) {
+  if (amplitude == appliedAmplitude) {
+    if (!amplitudeTextVisible) changeAmplitude();
+    return;
+  }
+
+  // Keep the value continuously visible while the encoder is being turned.
+  if (now - amplitudeLastEditTime < AMPLITUDE_EDIT_IDLE_MS) return;
+
+  if (now - amplitudeBlinkLastToggle < AMPLITUDE_BLINK_INTERVAL_MS) return;
+
+  amplitudeBlinkLastToggle = now;
+  amplitudeTextVisible = !amplitudeTextVisible;
+  if (amplitudeTextVisible) {
+    changeAmplitude();
+  } else {
+    mylcd.Set_Text_colour(TEXT_COLOR);
+    drawTextDiff(18, sweepMode ? 250 : 198, "", ampCache, PANEL_COLOR, 3);
   }
 }
 
 void show_frequency() {
+  char buf[24];
   mylcd.Fill_Screen(BACKGROUND_COLOR);
-  mylcd.Print_String("Generating", 170, FRAME_SPACING);
-  mylcd.Print_String("Frequency:", FRAME_SPACING, 75);
-  mylcd.Print_String(format_frequency(frequency), 140, 75);
-  mylcd.Print_String("LNA: ", FRAME_SPACING, 150);
-  if (lnaEnabled) { mylcd.Print_String("Enabled", 140, 150); } else {
-    mylcd.Print_String("Disabled", 140, 150);
-  }
-  mylcd.Print_String("ATT: ", FRAME_SPACING, 175);
-  mylcd.Print_String(String(attLevel) + " db", 140, 175);
-  mylcd.Print_String("Change step:   <<<<", FRAME_SPACING, 250);
-  mylcd.Print_String(format_frequency(frequency_step), 250 + FRAME_SPACING, 250);
-  mylcd.Print_String(">>>>", 420, 250);
-  mylcd.Print_String("BCD State: ", FRAME_SPACING, 100);
-  mylcd.Print_String(String(digitalRead(BCD1)) + " " + String(digitalRead(BCD2)) + " " + String(digitalRead(BCD3)) + " " + String(digitalRead(BCD4)), 140, 100);
-  switch(genMenu) {
-    case 1:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 75);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 2:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 150);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 3:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 175);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-  }
+  drawTabs(false);
+  selW = 0;  // forget the previous screen's selection border
+  digitCursorW = 0;
+
+  // Frequency hero
+  panel(MX, 42, CW, 74);
+  labelDim("FREQUENCY", 18, 48);
+  strcpy(freqCache, format_frequency(frequency));
+  mylcd.Set_Text_Size(3);
+  mylcd.Set_Text_colour(ACCENT_COLOR);
+  mylcd.Print_String(freqCache, 18, 74);
+
+  // Output status
+  panel(MX, 124, CW, 40);
+  labelDim("OUTPUT", 18, 136);
+  drawOutputState(144);
+
+  // Amplitude tile
+  panel(MX, 172, 229, 54);
+  labelDim("LEVEL", 18, 178);
+  snprintf(buf, sizeof(buf), "%d db", amplitude);
+  strcpy(ampCache, buf);
+  mylcd.Set_Text_Size(3);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  mylcd.Print_String(buf, 18, 198);
+  amplitudeTextVisible = true;
+  amplitudeBlinkLastToggle = millis();
+
+  // ATT tile
+  panel(243, 172, 229, 54);
+  labelDim("ATT / LNA", 253, 178);
+  snprintf(buf, sizeof(buf), "%udB %s", attValue, lnaEnabled ? "ON" : "OFF");
+  strcpy(attCache, buf);
+  mylcd.Set_Text_Size(3);
+  mylcd.Set_Text_colour(AMBER_COLOR);
+  mylcd.Print_String(buf, 253, 198);
+
+  drawFrequencyStep();
+
+  genMenu = 0;
+  genChangeMenu();  // draw the selection border
 }
 
-void changeStart() {
-  mylcd.Fill_Rect(140, 75, 200, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(format_frequency(sweepStartFrequency), 140, 75);
-}
-
-void changeStop() {
-  mylcd.Fill_Rect(140, 100, 200, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(format_frequency(sweepStopFrequency), 140, 100);
-}
-
-void changePoints() {
-  mylcd.Fill_Rect(140, 125, 200, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(String(sweepPoints), 140, 125);
-}
-
-void changeGenFrequency() {
-  mylcd.Fill_Rect(140, 75, 200, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(format_frequency(frequency), 140, 75);
-}
-
-void sweepChangeMenu() {
-  switch(sweepMenu) {
-    case 1:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 75);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 2:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 100);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 3:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 125);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 4:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 150);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 5:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 175);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-  }
-}
-
-void genChangeMenu() {
-  switch(genMenu) {
-    case 1:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 75);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 2:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 150);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 3:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Fill_Rect(350, 75, 50, 175, BACKGROUND_COLOR);
-      mylcd.Print_String(ARROW, 350, 175);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-  }
-}
-
-void changeStep() {
-  mylcd.Fill_Rect(250, 250, 170, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(format_frequency(frequency_step), 250, 250);
-}
-
-void changeLNA() {
-  lnaEnabled = !lnaEnabled;
-  mylcd.Fill_Rect(140, 150, 120, 25, BACKGROUND_COLOR);
-  mylcd.Print_String("LNA: ", FRAME_SPACING, 150);
-  if (lnaEnabled) { mylcd.Print_String("Enabled", 140, 150); } else {
-    mylcd.Print_String("Disabled", 140, 150);
-  }
-  digitalWrite(LNA_PIN, lnaEnabled);
-
-}
-
-void changeATT() {
-
-}
-
-void updateBCD() {
-  mylcd.Fill_Rect(140, 100, 120, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(String(digitalRead(BCD1)) + " " + String(digitalRead(BCD2)) + " " + String(digitalRead(BCD3)) + " " + String(digitalRead(BCD4)), 140, 100);
+void showATT() {
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%udB %s", attValue, lnaEnabled ? "ON" : "OFF");
+  mylcd.Set_Text_colour(AMBER_COLOR);
+  drawTextDiff(253, sweepMode ? 250 : 198, buf, attCache, PANEL_COLOR, 3);
 }
 
 void show_sweep() {
+  char buf[32];
   mylcd.Fill_Screen(BACKGROUND_COLOR);
-  mylcd.Print_String("Sweeping", 170, FRAME_SPACING);
-  mylcd.Print_String("Start: ", FRAME_SPACING, 75);
-  mylcd.Print_String(format_frequency(sweepStartFrequency), 140, 75);
-  mylcd.Print_String("Stop: ", FRAME_SPACING, 100);
-  mylcd.Print_String(format_frequency(sweepStopFrequency), 140, 100);
-  mylcd.Print_String("Points: ", FRAME_SPACING, 125);
-  mylcd.Print_String(String(sweepPoints), 140, 125);
-  mylcd.Print_String("LNA: ", FRAME_SPACING, 150);
-  if (lnaEnabled) { mylcd.Print_String("Enabled", 140, 150); } else {
-    mylcd.Print_String("Disabled", 140, 150);
-  }
-  mylcd.Print_String("ATT: ", FRAME_SPACING, 175);
-  mylcd.Print_String(String(attLevel) + " db", 140, 175);
-  mylcd.Print_String("Change step:   <<<<", FRAME_SPACING, 250);
-  mylcd.Print_String(format_frequency(frequency_step), 250, 250);
-  mylcd.Print_String(">>>>", 420, 250);
+  drawTabs(true);
+  selW = 0;
+  digitCursorW = 0;
+
+  // Output status
+  panel(MX, 40, CW, 32);
+  labelDim("OUTPUT", 18, 48);
+  drawOutputState(56);
+
+  // Start / Stop / Time — full-width rows (frequency strings are too long for
+  // side-by-side cells)
+  panel(MX, 76, CW, 32);
+  labelDim("START", 18, 84);
+  strcpy(startCache, format_frequency(sweepStartFrequency));
+  mylcd.Set_Text_Size(2);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  mylcd.Print_String(startCache, 150, 84);
+
+  panel(MX, 112, CW, 32);
+  labelDim("STOP", 18, 120);
+  strcpy(stopCache, format_frequency(sweepStopFrequency));
+  mylcd.Set_Text_Size(2);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  mylcd.Print_String(stopCache, 150, 120);
+
+  panel(MX, 148, CW, 32);
+  labelDim("TIME", 18, 156);
+  snprintf(buf, sizeof(buf), "%d ms", sweepTime);
+  strcpy(timeCache, buf);
+  mylcd.Set_Text_Size(2);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  mylcd.Print_String(buf, 150, 156);
+
+  // Sweep ramp icon
+  panel(MX, 186, CW, 34);
+  labelDim("SWEEP", 18, 194);
+  drawRamp();
+
+  // Amplitude tile
+  panel(MX, 226, 229, 52);
+  labelDim("LEVEL", 18, 232);
+  snprintf(buf, sizeof(buf), "%d db", amplitude);
+  strcpy(ampCache, buf);
+  mylcd.Set_Text_Size(3);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  mylcd.Print_String(buf, 18, 250);
+  amplitudeTextVisible = true;
+  amplitudeBlinkLastToggle = millis();
+
+  // ATT tile
+  panel(243, 226, 229, 52);
+  labelDim("ATT / LNA", 253, 232);
+  snprintf(buf, sizeof(buf), "%udB %s", attValue, lnaEnabled ? "ON" : "OFF");
+  strcpy(attCache, buf);
+  mylcd.Set_Text_Size(3);
+  mylcd.Set_Text_colour(AMBER_COLOR);
+  mylcd.Print_String(buf, 253, 250);
+
+  drawFrequencyStep();
+
+  sweepMenu = 0;
+  sweepChangeMenu();
+}
+
+void changeStart() {
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  drawTextDiff(150, 84, format_frequency(sweepStartFrequency), startCache, PANEL_COLOR, 2);
+  drawSelectedFrequencyDigit();
+}
+
+void changeStop() {
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  drawTextDiff(150, 120, format_frequency(sweepStopFrequency), stopCache, PANEL_COLOR, 2);
+  drawSelectedFrequencyDigit();
+}
+
+void changeTime() {
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%d ms", sweepTime);
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  drawTextDiff(150, 156, buf, timeCache, PANEL_COLOR, 2);
+}
+
+void changeGenFrequency() {
+  mylcd.Set_Text_colour(ACCENT_COLOR);
+  drawTextDiff(18, 74, format_frequency(frequency), freqCache, PANEL_COLOR, 3);
+  drawSelectedFrequencyDigit();
+}
+
+// Cursor rects mirror the editable panels drawn in show_sweep().
+void sweepChangeMenu() {
   switch(sweepMenu) {
-    case 1:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 75);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 2:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 150);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
-    case 3:
-      mylcd.Set_Text_colour(ARROW_COLOR);
-      mylcd.Print_String(ARROW, 350, 175);
-      mylcd.Set_Text_colour(TEXT_COLOR);
-      break;
+    case 0: selectField(MX, 40, CW, 32);    break; // output
+    case 1: selectField(MX, 76, CW, 32);    break; // start
+    case 2: selectField(MX, 112, CW, 32);   break; // stop
+    case 3: selectField(MX, 148, CW, 32);   break; // time
+    case 4: selectField(MX, 226, 229, 52);  break; // amplitude
+    case 5: selectField(243, 226, 229, 52); break; // LNA
   }
+  drawSelectedFrequencyDigit();
+}
+
+// Cursor rects mirror the editable panels drawn in show_frequency().
+void genChangeMenu() {
+  switch(genMenu) {
+    case 0: selectField(MX, 124, CW, 40);   break; // output
+    case 1: selectField(MX, 42, CW, 74);    break; // frequency
+    case 2: selectField(MX, 172, 229, 54);  break; // amplitude
+    case 3: selectField(243, 172, 229, 54); break; // LNA
+  }
+  drawSelectedFrequencyDigit();
+}
+
+void changeStep() {
+  drawStepValue();
+  drawSelectedFrequencyDigit();
+}
+
+// Repaint just the LED + ON/OFF inside the OUTPUT card and update the AD9851
+// power-down bit. The currently selected frequency is restored on enable.
+void changeOutput() {
+  int16_t py = sweepMode ? 40 : 124;
+  int16_t ph = sweepMode ? 32 : 40;
+  // clear just the LED+text strip, staying clear of the selection border edges
+  mylcd.Fill_Rect(138, py + 5, 320, ph - 10, PANEL_COLOR);
+  unsigned long activeFrequency = sweepMode ? sweepCurrentFrequency : frequency;
+  dds(activeFrequency, !outputEnabled);
+  if (outputEnabled) set_bpf(activeFrequency);
+  drawOutputState(py + ph / 2);
 }
 
 void touchProcess() {
-  if (my_touch.TP_Get_State()&TP_PRES_DOWN) 
-  {
-    delay(200);
-    if (sweepMode) {
-        if ((my_touch.y<=75) && (my_touch.y>=50)) { 
-          sweepMenu=1; 
-          sweepChangeMenu();
-        }
-        if ((my_touch.y<=100) && (my_touch.y>=75)) { 
-          sweepMenu=2; 
-          sweepChangeMenu();
-        }
-        if ((my_touch.y<=125) && (my_touch.y>=100)) { 
-          sweepMenu=3; 
-          sweepChangeMenu();
-        }
-        if ((my_touch.y<=150) && (my_touch.y>=125)) { 
-          sweepMenu=4; 
-          sweepChangeMenu();
-        }
-        if ((my_touch.y<=175) && (my_touch.y>=150)) { 
-          sweepMenu=5; 
-          sweepChangeMenu();
-        }
-    } else {
-        if ((my_touch.y<=75) && (my_touch.y>=50)) { 
-          genMenu=1; 
-          genChangeMenu();
-        }
-        if ((my_touch.y<=150) && (my_touch.y>=125)) { 
-          genMenu=2; 
-          genChangeMenu();
-        }
-        if ((my_touch.y<=175) && (my_touch.y>=150)) { 
-          genMenu=3; 
-          genChangeMenu();
-        }
-    }
-    
-    if ((my_touch.y<=300) && (my_touch.y>=250)) {
-      if  ((my_touch.x<=250) && (my_touch.x>=100)) {
-        if (frequency_step == min_frequency_step) {
-          frequency_step = max_frequency_step;
-        } else {
-          frequency_step /= 10;
-        }
-        
-        Serial.print("Multiplier:");
-        Serial.println(frequency_step);
-        changeStep();
+  const bool pressed = my_touch.TP_Get_State() & TP_PRES_DOWN;
+  const bool coordinateValid = my_touch.x < 480 && my_touch.y < 320;
 
-        } if (my_touch.x>=420) {
-          if (frequency_step == max_frequency_step) {
-            frequency_step = min_frequency_step;
-            } else {
-              frequency_step *= 10;
-            }
-            Serial.print("Multiplier:");
-            Serial.println(frequency_step);
-            changeStep();
-          }
+  if (pressed) {
+    // TP_Scan marks the panel as pressed from TIRQ alone, even when its ADC
+    // samples disagree. Only start/continue a gesture with screen coordinates.
+    if (!coordinateValid) return;
+
+    if (!wasPressed) {
+      wasPressed = true;
+      touchPressStartedAt = millis();
+      touchDownX = my_touch.x;
+      touchDownY = my_touch.y;
+    }
+    touchLastX = my_touch.x;
+    touchLastY = my_touch.y;
+    return;
+  }
+
+  if (wasPressed) {
+    wasPressed = false;
+    if (millis() - touchPressStartedAt < TOUCH_MIN_PRESS_MS) return;
+
+    const uint16_t ty = touchLastY;
+    const uint16_t tx = touchLastX;
+
+    // A tab activates only when both ends of the gesture are on that same tab.
+    // This prevents a noisy release or a drag across the screen from changing
+    // operating mode.
+    const int8_t downTab = touchDownY <= 36 ? (touchDownX < 240 ? 0 : 1) : -1;
+    const int8_t upTab = ty <= 36 ? (tx < 240 ? 0 : 1) : -1;
+    if (downTab >= 0 || upTab >= 0) {
+      if (downTab != upTab) return;
+      if (upTab == 0) {
+        if (sweepMode) {
+          sweepMode = false;
+          Serial.println("Generator mode");
+          show_frequency();
+          dds(frequency, !outputEnabled);
+          set_bpf(frequency);
+        }
+      } else {
+        if (!sweepMode) {
+          sweepMode = true;
+          Serial.println("Sweep mode");
+          sweepCurrentFrequency = sweepStartFrequency;
+          sweepCycleStartedUs = micros();
+          show_sweep();
+          dds(sweepCurrentFrequency, !outputEnabled);
+        }
+      }
+      return;
+    }
+
+    if (sweepMode) {
+      if      (ty >= 40  && ty <= 72)  { sweepMenu = 0; sweepChangeMenu(); }
+      else if (ty >= 76  && ty <= 108) {
+        sweepMenu = 1;
+        sweepChangeMenu();
+        selectFrequencyDigit(sweepStartFrequency, 150, 2, tx);
+      }
+      else if (ty >= 112 && ty <= 144) {
+        sweepMenu = 2;
+        sweepChangeMenu();
+        selectFrequencyDigit(sweepStopFrequency, 150, 2, tx);
+      }
+      else if (ty >= 148 && ty <= 180) { sweepMenu = 3; sweepChangeMenu(); }
+      else if (ty >= 226 && ty <= 278 && tx < 240) { sweepMenu = 4; sweepChangeMenu(); }
+      else if (ty >= 226 && ty <= 278 && tx >= 240) { sweepMenu = 5; sweepChangeMenu(); }
+    } else {
+      if      (ty >= 124 && ty <= 164) { genMenu = 0; genChangeMenu(); }
+      else if (ty >= 42  && ty <= 116) {
+        genMenu = 1;
+        genChangeMenu();
+        selectFrequencyDigit(frequency, 18, 3, tx);
+      }
+      else if (ty >= 172 && ty <= 226) {
+        if (tx < 240) {
+          // second tap on the already-selected amplitude toggles the step size
+          if (genMenu != 2) { genMenu = 2; genChangeMenu(); }
+          else { ampStep = (ampStep == 1) ? 10 : 1; }
+        } else { genMenu = 3; genChangeMenu(); }
       }
     }
-    if ((my_touch.y<=50) && (my_touch.y>=0)) {
-      if (sweepMode) {
-        sweepMode = false;
-        delay(200);
-        show_frequency();
-      } 
-      else {
-        sweepMode = true;
-        delay(200);
-        show_sweep();
+
+    // Frequency-step footer: only the visible arrow buttons are actionable.
+    if (ty >= STEP_BUTTON_Y && ty <= STEP_BUTTON_Y + STEP_BUTTON_H) {
+      if (tx >= STEP_LEFT_BUTTON_X && tx <= STEP_LEFT_BUTTON_X + STEP_BUTTON_W) {
+        unsigned long nextStep = (frequency_step == min_frequency_step) ? max_frequency_step : frequency_step / 10;
+        noInterrupts();
+        frequency_step = nextStep;
+        interrupts();
+        Serial.print("Multiplier:"); Serial.println(frequency_step);
+        changeStep();
+      } else if (tx >= STEP_RIGHT_BUTTON_X && tx <= STEP_RIGHT_BUTTON_X + STEP_BUTTON_W) {
+        unsigned long nextStep = (frequency_step == max_frequency_step) ? min_frequency_step : frequency_step * 10;
+        noInterrupts();
+        frequency_step = nextStep;
+        interrupts();
+        Serial.print("Multiplier:"); Serial.println(frequency_step);
+        changeStep();
       }
+    }
   }
 }
 
-void setATT(bool isIncrementing) {
-  if (isIncrementing) { attLevel = attLevel + attStep; } else { attLevel = attLevel - attStep; } 
-  if (attLevel > attenuator.getMax())
-  {
-    attLevel = attenuator.getMax();
+void updateAmplitudeSettings(int requestedAmplitude) {
+  int correctedLevel = calibratedLevelFor(requestedAmplitude);
+  correctedLevel = min(maxAmplitude, max(minAmplitude, correctedLevel));
+  realAmplitude = correctedLevel;
+  attValue = (unsigned int)(-correctedLevel);
+}
+
+void changeATT() {
+  updateAmplitudeSettings(amplitude);
+}
+
+void changeATTValue() {
+  if (lastAttValue != attValue) {
+    setAttenuation(attValue);
+    lastAttValue = attValue;
+    showATT();
   }
-  if (attLevel < 0)
-  {
-    attLevel = 0;
-  }
-  attenuator.setLevel(attLevel);
-  mylcd.Fill_Rect(140, 175, 100, 25, BACKGROUND_COLOR);
-  mylcd.Print_String(String(attLevel) + " db", 140, 175);
 }
 
 char* format_frequency(unsigned volatile long frequency) {
@@ -511,139 +1010,183 @@ char* format_frequency(unsigned volatile long frequency) {
     return output;
 }
 
+void showSplashScreen() {
+  const int16_t cardX = 28;
+  const int16_t cardY = 42;
+  const int16_t cardW = 424;
+  const int16_t cardH = 236;
+
+  mylcd.Fill_Screen(BACKGROUND_COLOR);
+
+  // A quiet, instrument-style title card that matches the main UI.
+  mylcd.Set_Draw_color(PANEL_COLOR);
+  mylcd.Fill_Round_Rectangle(cardX, cardY,
+                            cardX + cardW, cardY + cardH, 10);
+  mylcd.Set_Draw_color(ACCENT_COLOR);
+  mylcd.Draw_Round_Rectangle(cardX, cardY,
+                            cardX + cardW, cardY + cardH, 10);
+  mylcd.Draw_Round_Rectangle(cardX + 3, cardY + 3,
+                            cardX + cardW - 3, cardY + cardH - 3, 8);
+
+  // Small decorative rules frame the subtitle without adding a bitmap.
+  mylcd.Draw_Line(70, 104, 220, 104);
+  mylcd.Draw_Line(260, 104, 410, 104);
+  mylcd.Fill_Circle(240, 104, 3);
+
+  mylcd.Set_Text_Mode(1);
+  mylcd.Set_Text_Back_colour(PANEL_COLOR);
+  mylcd.Set_Text_colour(TEXT_DIM_COLOR);
+  mylcd.Set_Text_Size(2);
+  mylcd.Print_String("DIRECT DIGITAL SYNTHESIS", 96, 72);
+
+  mylcd.Set_Text_colour(ACCENT_COLOR);
+  mylcd.Set_Text_Size(4);
+  mylcd.Print_String("AD9851", 168, 124);
+
+  mylcd.Set_Draw_color(TEXT_DIM_COLOR);
+  mylcd.Draw_Line(96, 170, 384, 170);
+
+  mylcd.Set_Text_colour(TEXT_COLOR);
+  mylcd.Set_Text_Size(3);
+  mylcd.Print_String("SIGNAL GENERATOR", 96, 194);
+}
+
 void setup() {
   Serial.begin(9600);
-
   mylcd.Init_LCD();
-  mylcd.Fill_Screen(BACKGROUND_COLOR);
   mylcd.Set_Rotation(3); 
-  mylcd.Set_Text_Mode(1);
-  mylcd.Set_Text_colour(BLACK);
-  mylcd.Set_Text_Back_colour(BACKGROUND_COLOR);
-  mylcd.Set_Text_Size(7);
-  mylcd.Print_String("SIGEN", 140, 80);
-  mylcd.Set_Text_Size(5);
-  mylcd.Set_Text_colour(RED);
-  mylcd.Print_String("AD9851", 160, 150);
-  delay(5000);
+  showSplashScreen();
+  delay(3000);
   mylcd.Set_Text_colour(TEXT_COLOR);
   mylcd.Fill_Screen(BACKGROUND_COLOR);
   mylcd.Set_Text_Size(2); 
 
   my_touch.TP_Set_Rotation(3);
   my_touch.TP_Init(mylcd.Get_Rotation(),mylcd.Get_Display_Width(),mylcd.Get_Display_Height()); 
+  // The controller's interrupt output is active-low. Keep it at a defined
+  // level when the line is idle, even if the display board's pull-up is weak.
+  pinMode(TouchIrqPin, INPUT_PULLUP);
 
   pinMode(BCD1, OUTPUT);
   pinMode(BCD2, OUTPUT);
   pinMode(BCD3, OUTPUT);
   pinMode(BCD4, OUTPUT);
   pinMode(LNA_PIN, OUTPUT);
-  digitalWrite(BCD1, LOW); 
-  digitalWrite(BCD2, LOW); 
-  digitalWrite(BCD3, LOW); 
-  digitalWrite(BCD4, LOW);
-  digitalWrite(LNA_PIN, lnaEnabled);
+  setFilterCode(0);
+  applyLnaState();
+  setupAttenuator();
+  updateAmplitudeSettings(amplitude);
+  setGain();
 
-  // Rotary pulses are INPUTs
-  pinMode(EncoderPinCLK, INPUT);
-  pinMode(EncoderPinDT, INPUT);
+  // Keep bare mechanical encoder contacts at a defined level when open.
+  pinMode(EncoderPinCLK, INPUT_PULLUP);
+  pinMode(EncoderPinDT, INPUT_PULLUP);
   pinMode(EncoderPinSW, INPUT_PULLUP);
 
-  attenuator.begin();
+  setup_dds();
+  set_bpf(frequency);
+  dds(frequency, true);
 
   // Attach the routine to service the interrupts
-  attachInterrupt(digitalPinToInterrupt(EncoderPinCLK), isr, LOW);
-  setup_dds();
-
+  attachInterrupt(digitalPinToInterrupt(EncoderPinCLK), isr, CHANGE);
   show_frequency();
-  set_bpf(frequency);
-  dds(frequency);
   Serial.println("Start");
 }
 
 void loop() {
-  //Encoder pressed
-  if (!digitalRead(EncoderPinSW)) {
-    unsigned long currentTime = millis();
+  // Debounce the encoder switch and act once on a stable press edge.
+  static bool swStable = HIGH;
+  static bool swLastReading = HIGH;
+  static unsigned long swLastChangeTime = 0;
+  unsigned long now = millis();
+  bool swReading = digitalRead(EncoderPinSW);
 
-    // reset long press
-    if (currentTime - longClickTime > delayAfterLongClick) {
-      longPressDetected = false;
-      Serial.println("Long press = false");
-    }
-    
-    // long press handle
-    while (!digitalRead(EncoderPinSW)) {
-      if (millis() - currentTime >= longPressDuration) {
-        longClickTime = millis();
-        longPressDetected = true;
-        Serial.println("Long press = true");
-        if (sweepMode) {
-          if (sweepMenu !=5) sweepMenu++; else sweepMenu = 1;
-            Serial.println("Sweep menu item:");
-            Serial.println(sweepMenu);
-            waitingForSecondClick = false;
-            sweepChangeMenu();
-            delay(200);
-        } else {
-          if (genMenu !=3) genMenu++; else genMenu = 1;
-          Serial.println("Gen menu item:");
-          Serial.println(genMenu);
-          waitingForSecondClick = false;
-          genChangeMenu();
-          delay(200);
-        }
-      }
-    }
+  if (swReading != swLastReading) {
+    swLastReading = swReading;
+    swLastChangeTime = now;
+  }
 
-    // double click
-    if (waitingForSecondClick && (currentTime - lastPressTime <= doubleClickInterval)) {
-      if (!sweepMode) { 
-        Serial.println("Sweep mode");
-        show_sweep();
-        sweepMode = true; 
-      } else {
-        sweepMode = false;
-        Serial.println("Generator mode");
-        show_frequency();
+  if (swReading != swStable &&
+      now - swLastChangeTime >= ENCODER_BUTTON_DEBOUNCE_MS) {
+    swStable = swReading;
+    if (swStable == LOW) {
+      if ((!sweepMode && genMenu == 1) ||
+          (sweepMode && (sweepMenu == 1 || sweepMenu == 2))) {
+        cycleFrequencyDigit();
+        return;
       }
-      waitingForSecondClick = false;
-    } else {
-      waitingForSecondClick = true;
-      lastPressTime = currentTime;
+      if ((!sweepMode && genMenu == 3) ||
+          (sweepMode && sweepMenu == 5)) {
+        lnaEnabled = !lnaEnabled;
+        applyLnaState();
+        return;
+      }
+      noInterrupts();
+      int amplitudeBeingApplied = amplitude;
+      interrupts();
+      updateAmplitudeSettings(amplitudeBeingApplied);
+      changeATTValue();  // commits the attenuator and repaints the ATT tile
+      appliedAmplitude = amplitudeBeingApplied;
+      changeAmplitude(); // refresh the amplitude tile
     }
   }
 
-  // single click
-  if (waitingForSecondClick && (millis() - lastPressTime > doubleClickInterval) && !longPressDetected) {
-    if (frequency_step == max_frequency_step) {
-      frequency_step = 1;
-    } else {
-      frequency_step *= 10;
-    }
-    Serial.print("Multiplier:");
-    Serial.println(frequency_step);
-    changeStep();
-    waitingForSecondClick = false;
+  // handle UI refreshes requested by the ISR (LCD/Serial done here, not in the ISR)
+  if (uiOutputChanged)     { uiOutputChanged = false;     changeOutput(); }
+  if (uiAmplitudeChanged)  {
+    uiAmplitudeChanged = false;
+    amplitudeLastEditTime = now;
+    changeATT();
+    changeAmplitude();
   }
- 
-  // process generator 
+  if (uiSweepStartChanged) { uiSweepStartChanged = false; changeStart(); }
+  if (uiSweepStopChanged)  { uiSweepStopChanged = false;  changeStop(); }
+  if (uiSweepTimeChanged)  { uiSweepTimeChanged = false;  changeTime(); }
+  if (uiLnaChanged)        { uiLnaChanged = false;        applyLnaState(); }
+
+  serviceAmplitudeBlink(now);
+
+  // process generator
   if (!sweepMode) {
     if (frequency != last_frequency) {
       Serial.print(frequency > last_frequency ? "Up  :" : "Down:");
       Serial.println(format_frequency(frequency));
       changeGenFrequency();
       set_bpf(frequency);
-      dds(frequency);
+      dds(frequency, !outputEnabled);
       last_frequency = frequency;
     }
   } else {
-    // process sweep
-    if (sweepCurrentFrequency >= sweepStopFrequency) sweepCurrentFrequency = sweepStartFrequency;
-    sweepCurrentFrequency = sweepCurrentFrequency + sweepStep;
-    dds(sweepCurrentFrequency);
+    // AD9851 has no internal ramp generator, so interpolate the current point
+    // locally across the requested sweep time.
+    if ((sweepStartFrequency != sweepLastStartFrequency) || (sweepStopFrequency != sweepLastStopFrequency) || (sweepTime != sweepLastTime)) {
+      sweepLastStartFrequency = sweepStartFrequency;
+      sweepLastStopFrequency = sweepStopFrequency;
+      sweepLastTime = sweepTime;
+      sweepCurrentFrequency = sweepStartFrequency;
+      sweepCycleStartedUs = micros();
+    }
+    if (outputEnabled) {
+      unsigned long durationUs = (unsigned long)sweepTime * 1000UL;
+      unsigned long elapsedUs = micros() - sweepCycleStartedUs;
+      if (elapsedUs >= durationUs) {
+        sweepCycleStartedUs = micros();
+        elapsedUs = 0;
+      }
+      unsigned long span = sweepStopFrequency - sweepStartFrequency;
+      unsigned long nextFrequency = sweepStartFrequency +
+          (unsigned long)(((uint64_t)span * elapsedUs) / durationUs);
+      if (nextFrequency != sweepCurrentFrequency) {
+        sweepCurrentFrequency = nextFrequency;
+        dds(sweepCurrentFrequency, false);
+      }
+    }
   }
   // scan touch
+  // TP_Scan leaves the previous coordinates intact when ADC samples disagree.
+  // Poison them before every scan so touchProcess can reject such a sample.
+  my_touch.x = 0xffff;
+  my_touch.y = 0xffff;
   my_touch.TP_Scan(0);
   touchProcess();
 }

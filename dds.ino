@@ -66,16 +66,16 @@ void reset_dds()
   // Chip is RESET now
 }
 
-// dds instruction write - takes unsigned long frequency in Hz
-void dds(unsigned long freq)
+// Write one complete 40-bit AD9851 word. W32 enables the 6x reference-clock
+// multiplier and W34 powers the DDS down when requested.
+void dds(unsigned long freq, bool powerDown)
 {
-  int last8;
   unsigned long DDSLong;
   unsigned long Bitmask32 = 1; // 32 bit bit mask '0000 0000 0000 0000 0000 0000 0000 0001'
   byte Bitmask8 = 1;           // 8 bit bit mask '0000 0001'
                              // we shift these bitmasks left 1 bit at a time and AND them bitwise with a value to simply
                              // determine if an unknown individual bit within a data structure is a 1 or a 0
-  byte FirstBit = 1;
+  byte controlByte = powerDown ? 0x05 : 0x01;
 
   float clock_frequency = 180000000;  // this is the on-board clock frequency of my AD9851 board
   float twoE32 = pow (2,32);          // this is 2 to the power of 32 (which is quite a lot)
@@ -100,14 +100,11 @@ void dds(unsigned long freq)
   }
 
   // now send the final 8 bits to complete the 40 bit instruction
-  // the AD9851 datasheet explains this well, but we need 1000 0000 because we want
-  // to use the clock multiplier
-  // so here we are going to look 8 times and send a 1 the first time round then 7 0s
-  // 10 out of 10 for niftyness but 0 out of 10 for readability:
+  // W32..W39 are shifted LSB first, just like the frequency word.
 
   for (Bitmask8 = 1; Bitmask8 > 0; Bitmask8 <<= 1) 
   {                                             // iterate through last 8 bits of 40 bit instruction to DDS
-    if (Bitmask8 & FirstBit)                    // 1st bit of remaining 8 needs to be 1 to enable clock multiplier
+    if (Bitmask8 & controlByte)
       digitalWrite(dds_DATA,HIGH); 
     else
       digitalWrite(dds_DATA,LOW);  
@@ -128,4 +125,9 @@ void dds(unsigned long freq)
   digitalWrite (dds_LOAD, LOW);                     // to execute previous instruction set
   
   return;
+}
+
+void dds(unsigned long freq)
+{
+  dds(freq, false);
 }
