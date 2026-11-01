@@ -32,6 +32,8 @@ requested value. Exact points are used directly and values between two points
 are linearly interpolated. Values outside the measured range remain
 uncalibrated.
 
-### AD9851 branch:
-<br>
-Pretty the same config but for AD9851 signal generator. Not developing anymore.
+### AD9851 branch
+
+The `AD9851` branch provides the same interface for a directly connected
+AD9851 DDS with a PE4302 or PE4312 digital step attenuator. Current features
+were backported from `main` but have not yet been tested on physical hardware.
