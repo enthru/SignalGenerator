@@ -34,13 +34,17 @@ uncalibrated.
 
 ### AD9851 branch
 
-This branch carries the same interface and controls for a directly connected
-AD9851 DDS:
+> **Warning:** The current changes were backported from `main` and have not
+> been tested on physical hardware yet.
+
+This branch is intended for a directly connected AD9851 DDS with a PE4302 or
+PE4312 digital step attenuator. It carries the same interface and controls as
+the main branch, adapted to this hardware:
 
 - generator and timed sweep modes;
 - touch and rotary-encoder frequency-digit editing;
 - hardware output enable/disable through the AD9851 power-down bit;
-- PE4302 output-level control and configurable calibration points;
+- PE4302/PE4312 output-level control and configurable calibration points;
 - LNA control and BCD output for external band-pass filters;
 - the dark instrument UI from `main`.
 
@@ -54,5 +58,5 @@ measurement.
 - LCDWIKI GUI, KBV and TOUCH libraries
 - Arduino Mega 2560 or compatible board
 
-The PE4302 serial protocol is implemented directly in the sketch, so no
-additional attenuator library is required.
+The compatible PE4302/PE4312 serial protocol is implemented directly in the
+sketch, so no additional attenuator library is required.
