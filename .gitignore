@@ -1,0 +1,15 @@
+# AI assistant working files
+CLAUDE.md
+AGENTS.md
+.claude/
+.codex/
+.agents/
+graphify-out/
+
+# Arduino build output
+build/
+*.hex
+*.elf
+
+# OS
+.DS_Store
