@@ -60,6 +60,8 @@ const unsigned long max_frequency_step = 100000000; //Max Frequency step
 const unsigned int min_frequency_step = 1;
 const unsigned long max_frequency = 500000000; //Max Frequency
 const int min_frequency=25; // Minimum Frequency
+// The DDS module accepts sweep only from 100 kHz and with start < stop.
+const unsigned long min_sweep_frequency = 100000;
 
 unsigned long last_frequency = 14000000;
 volatile unsigned long frequency_step = 100000;
@@ -110,10 +112,14 @@ volatile short genMenu = 1;
 int realAmplitude = 0;
 volatile int amplitude = 0;
 int appliedAmplitude = 0;
-int minAmplitude = -154;
-int maxAmplitude = 17;
-int minAmplitudeSweep = -70;
-int maxAmplitudeSweep = 10;
+// The DDS module accepts P-72..P0 (DAC current Normal); the step attenuator
+// adds up to 70 dB below that.
+const int minModuleGain = -72;
+const int maxModuleGain = 0;
+int minAmplitude = minModuleGain - 70;
+int maxAmplitude = maxModuleGain;
+int minAmplitudeSweep = minAmplitude;
+int maxAmplitudeSweep = maxModuleGain;
 unsigned int attValue = 0;
 unsigned int lastAttValue = 0;
 
@@ -203,18 +209,10 @@ void applyEncoderStep(bool directionLow) {
         break;
         case 2:
           if (directionLow) {
-            if (amplitude > minAmplitude) {
-              amplitude = amplitude - ampStep;
-            }  else {
-              amplitude = minAmplitude;
-            }
+            amplitude = (amplitude - (int)ampStep > minAmplitude) ? amplitude - (int)ampStep : minAmplitude;
           }
           else {
-            if (amplitude < maxAmplitude) {
-              amplitude = amplitude + ampStep;
-            } else {
-              amplitude = maxAmplitude;
-            }
+            amplitude = (amplitude + (int)ampStep < maxAmplitude) ? amplitude + (int)ampStep : maxAmplitude;
           }
           uiAmplitudeChanged = true;
           break;
@@ -227,21 +225,21 @@ void applyEncoderStep(bool directionLow) {
           break;
         case 1:
           if (directionLow) {
-            sweepStartFrequency = (sweepStartFrequency > (unsigned long)min_frequency + frequency_step) ? sweepStartFrequency - frequency_step : (unsigned long)min_frequency;
+            sweepStartFrequency = (sweepStartFrequency > min_sweep_frequency + frequency_step) ? sweepStartFrequency - frequency_step : min_sweep_frequency;
           } else {
-            sweepStartFrequency = (sweepStartFrequency < max_frequency - frequency_step) ? sweepStartFrequency + frequency_step : max_frequency;
+            sweepStartFrequency = (sweepStartFrequency < max_frequency - 1 - frequency_step) ? sweepStartFrequency + frequency_step : max_frequency - 1;
           }
-          if (sweepStartFrequency > sweepStopFrequency) { sweepStopFrequency = sweepStartFrequency; uiSweepStopChanged = true; }
+          if (sweepStartFrequency >= sweepStopFrequency) { sweepStopFrequency = sweepStartFrequency + 1; uiSweepStopChanged = true; }
           sweepCurrentFrequency = sweepStartFrequency;
           uiSweepStartChanged = true;
           break;
         case 2:
           if (directionLow) {
-            sweepStopFrequency = (sweepStopFrequency > (unsigned long)min_frequency + frequency_step) ? sweepStopFrequency - frequency_step : (unsigned long)min_frequency;
+            sweepStopFrequency = (sweepStopFrequency > min_sweep_frequency + 1 + frequency_step) ? sweepStopFrequency - frequency_step : min_sweep_frequency + 1;
           } else {
             sweepStopFrequency = (sweepStopFrequency < max_frequency - frequency_step) ? sweepStopFrequency + frequency_step : max_frequency;
           }
-          if (sweepStopFrequency < sweepStartFrequency) { sweepStartFrequency = sweepStopFrequency; uiSweepStartChanged = true; }
+          if (sweepStopFrequency <= sweepStartFrequency) { sweepStartFrequency = sweepStopFrequency - 1; uiSweepStartChanged = true; }
           sweepCurrentFrequency = sweepStartFrequency;
           uiSweepStopChanged = true;
           break;
@@ -255,18 +253,10 @@ void applyEncoderStep(bool directionLow) {
           break;
         case 4:
           if (directionLow) {
-            if (amplitude > minAmplitudeSweep) {
-              amplitude = amplitude - 10;
-            }  else {
-              amplitude = minAmplitudeSweep;
-            }
+            amplitude = (amplitude - 10 > minAmplitudeSweep) ? amplitude - 10 : minAmplitudeSweep;
           }
           else {
-            if (amplitude < maxAmplitudeSweep) {
-              amplitude = amplitude + 10;
-            } else {
-              amplitude = maxAmplitudeSweep;
-            }
+            amplitude = (amplitude + 10 < maxAmplitudeSweep) ? amplitude + 10 : maxAmplitudeSweep;
           }
           uiAmplitudeChanged = true;
           break;
@@ -1107,6 +1097,29 @@ void checkATT() {
   Serial3.println("D");
 }
 
+// The DDS module opens its serial port only after its own splash screen, so
+// commands sent right after power-up are lost. Poll it with "V" until it
+// answers (or give up after a timeout) before sending the initial state.
+const unsigned long MODULE_BOOT_TIMEOUT_MS = 10000;
+const unsigned long MODULE_POLL_INTERVAL_MS = 300;
+
+void waitForModule() {
+  const unsigned long started = millis();
+  while (millis() - started < MODULE_BOOT_TIMEOUT_MS) {
+    Serial3.println("V");
+    const unsigned long sent = millis();
+    while (millis() - sent < MODULE_POLL_INTERVAL_MS) {
+      if (Serial3.available()) {
+        delay(50);
+        while (Serial3.available()) Serial3.read();
+        Serial.println("DDS module ready");
+        return;
+      }
+    }
+  }
+  Serial.println("DDS module did not answer");
+}
+
 void showSplashScreen() {
   const int16_t cardX = 28;
   const int16_t cardY = 42;
@@ -1184,6 +1197,9 @@ void setup() {
   pinMode(EncoderPinDT, INPUT_PULLUP);
   pinMode(EncoderPinSW, INPUT_PULLUP);
 
+  waitForModule();
+  Serial3.println("D");
+  setGain();
   {
     char buf[24];
     snprintf(buf, sizeof(buf), "F%lu", (unsigned long)frequency);
