@@ -1100,6 +1100,7 @@ void checkATT() {
 // The DDS module opens its serial port only after its own splash screen, so
 // commands sent right after power-up are lost. Poll it with "V" until it
 // answers (or give up after a timeout) before sending the initial state.
+// The module itself starts with the output disabled, so no "D" is needed.
 const unsigned long MODULE_BOOT_TIMEOUT_MS = 10000;
 const unsigned long MODULE_POLL_INTERVAL_MS = 300;
 
@@ -1164,8 +1165,6 @@ void showSplashScreen() {
 void setup() {
   Serial.begin(9600);
   Serial3.begin(115200);
-  setGain();
-  Serial3.println("D");
   mylcd.Init_LCD();
   mylcd.Set_Rotation(3); 
   showSplashScreen();
@@ -1198,7 +1197,6 @@ void setup() {
   pinMode(EncoderPinSW, INPUT_PULLUP);
 
   waitForModule();
-  Serial3.println("D");
   setGain();
   {
     char buf[24];
