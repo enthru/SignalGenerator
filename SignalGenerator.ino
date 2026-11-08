@@ -253,10 +253,10 @@ void applyEncoderStep(bool directionLow) {
           break;
         case 4:
           if (directionLow) {
-            amplitude = (amplitude - 10 > minAmplitudeSweep) ? amplitude - 10 : minAmplitudeSweep;
+            amplitude = (amplitude - (int)ampStep > minAmplitudeSweep) ? amplitude - (int)ampStep : minAmplitudeSweep;
           }
           else {
-            amplitude = (amplitude + 10 < maxAmplitudeSweep) ? amplitude + 10 : maxAmplitudeSweep;
+            amplitude = (amplitude + (int)ampStep < maxAmplitudeSweep) ? amplitude + (int)ampStep : maxAmplitudeSweep;
           }
           uiAmplitudeChanged = true;
           break;
@@ -838,7 +838,11 @@ void touchProcess() {
         selectFrequencyDigit(sweepStopFrequency, 150, 2, tx);
       }
       else if (ty >= 148 && ty <= 180) { sweepMenu = 3; sweepChangeMenu(); }
-      else if (ty >= 226 && ty <= 278 && tx < 240) { sweepMenu = 4; sweepChangeMenu(); }
+      else if (ty >= 226 && ty <= 278 && tx < 240) {
+        // second tap on the already-selected amplitude toggles the step size
+        if (sweepMenu != 4) { sweepMenu = 4; sweepChangeMenu(); }
+        else { ampStep = (ampStep == 1) ? 10 : 1; }
+      }
     } else {
       if      (ty >= 124 && ty <= 164) { genMenu = 0; genChangeMenu(); }
       else if (ty >= 42  && ty <= 116) {
